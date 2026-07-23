@@ -38,8 +38,10 @@ CUSTOM_WEBHOOK_BEARER_TOKEN=replace-with-the-same-random-secret
 CUSTOM_WEBHOOK_BODY_TEMPLATE={"text":$content_json,"source":"daily-stock-analysis","kind":"stock-report"}
 ```
 
-The adapter parses the JSON value before invoking Hermes, so embedded newlines
-remain newline characters instead of visible `\n` text.
+The adapter parses the JSON value and passes the report body to `hermes send`
+as its plain positional message argument. The trailing `--json` controls only
+Hermes' command result. It does not JSON-encode the message, so embedded
+newlines remain newline characters instead of visible `\n` text.
 
 ## Smoke test
 

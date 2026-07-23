@@ -34,18 +34,6 @@ def extract_report_text(payload: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def build_qqbot_payload(content: str) -> str:
-    """Build structured QQBot input while preserving real newline characters."""
-    return json.dumps(
-        {
-            "text": content,
-            "source": "daily-stock-analysis",
-            "kind": "stock-report",
-        },
-        ensure_ascii=False,
-    )
-
-
 def send_to_qqbot(content: str, *, hermes_path: str, timeout_seconds: int) -> dict[str, Any]:
     """Send one report through Hermes' already-configured QQBot channel."""
     command = [
@@ -53,7 +41,7 @@ def send_to_qqbot(content: str, *, hermes_path: str, timeout_seconds: int) -> di
         "send",
         "--to",
         "qqbot",
-        build_qqbot_payload(content),
+        content,
         "--json",
     ]
     completed = subprocess.run(
