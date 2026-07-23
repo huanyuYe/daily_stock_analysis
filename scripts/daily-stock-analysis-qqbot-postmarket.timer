@@ -1,0 +1,10 @@
+[Unit]
+Description=A-share postmarket analysis and QQ push
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 15:35:00 Asia/Shanghai
+AccuracySec=1min
+Unit=daily-stock-analysis-qqbot-active.service
+
+[Install]
+WantedBy=timers.target
