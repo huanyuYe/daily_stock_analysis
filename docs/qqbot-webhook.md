@@ -14,7 +14,9 @@ NotificationService
 
 Hermes is used only as the configured transport adapter. The script calls
 `hermes send` directly; it does not invoke an agent and does not generate or
-rewrite report content.
+rewrite report content. When `QQBOT_GROUP_OPENID` is configured, the bridge
+uses the explicit `qqbot:<group-openid>` target and rejects a successful
+response whose returned `chat_id` does not match that group.
 
 ## Start the adapter
 
@@ -23,8 +25,8 @@ Run it as the OS user whose Hermes home channel is configured:
 ```bash
 export QQBOT_BRIDGE_BEARER_TOKEN='replace-with-a-random-secret'
 export QQBOT_HERMES_PATH='/home/ubuntu/.local/bin/hermes'
-# Optional: route only this bridge to a QQ group without changing Hermes'
-# existing private home channel.
+# Optional: route only this bridge to an explicit QQ group without changing
+# Hermes' existing private home channel.
 export QQBOT_GROUP_OPENID='group-openid-from-an-inbound-group-at-event'
 python scripts/qqbot_webhook_bridge.py
 ```
@@ -58,3 +60,19 @@ curl -fsS \
 
 Do not expose the bridge port publicly or commit its bearer token.
 Keep `QQBOT_GROUP_OPENID` in the host environment file; do not commit it.
+
+## QQ official group limitation
+
+An ordinary QQ official bot may receive group `@` events but still lack
+permission for proactive group messages. Scheduled reports have no inbound
+`msg_id`, so they cannot use QQ's short passive-reply window. In that case the
+group endpoint returns error `40034105` (`proactive message not permitted`).
+
+The bridge must not treat a successful C2C fallback as a successful group
+delivery. It therefore uses an explicit group target and verifies that
+Hermes returns the same `chat_id`. Keep the scheduled notification disabled
+unless an end-to-end test confirms delivery to the group, or use one of:
+
+- QQ private C2C delivery;
+- a passive group command that returns the latest stored report after `@bot`;
+- another notification platform that supports proactive group webhooks.

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import unittest
 from unittest.mock import patch
 
@@ -31,29 +30,42 @@ class QQBotWebhookBridgeTest(unittest.TestCase):
         self.assertEqual(command[:4], ["/opt/hermes", "send", "--to", "qqbot"])
         self.assertEqual(command[4], "第一行\n第二行")
         self.assertEqual(command[-1], "--json")
-        self.assertIsInstance(mock_run.call_args.kwargs["env"], dict)
 
-    @patch.dict(
-        os.environ,
-        {
-            "QQBOT_GROUP_OPENID": "group-openid-1",
-            "QQBOT_HOME_CHANNEL": "private-openid-1",
-        },
-        clear=False,
-    )
+    @patch.dict("os.environ", {"QQBOT_GROUP_OPENID": "group-openid-1"}, clear=False)
     @patch("scripts.qqbot_webhook_bridge.subprocess.run")
-    def test_send_to_qqbot_scopes_group_target_to_child_process(self, mock_run):
+    def test_send_to_qqbot_uses_and_verifies_explicit_group_target(self, mock_run):
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = json.dumps(
-            {"success": True, "platform": "qqbot", "message_id": "message-2"}
+            {
+                "success": True,
+                "platform": "qqbot",
+                "chat_id": "group-openid-1",
+                "message_id": "message-2",
+            }
         )
         mock_run.return_value.stderr = ""
 
         send_to_qqbot("群聊报告", hermes_path="/opt/hermes", timeout_seconds=30)
 
-        command_env = mock_run.call_args.kwargs["env"]
-        self.assertEqual(command_env["QQBOT_HOME_CHANNEL"], "group-openid-1")
-        self.assertEqual(os.environ["QQBOT_HOME_CHANNEL"], "private-openid-1")
+        command = mock_run.call_args.args[0]
+        self.assertEqual(command[:4], ["/opt/hermes", "send", "--to", "qqbot:group-openid-1"])
+
+    @patch.dict("os.environ", {"QQBOT_GROUP_OPENID": "group-openid-1"}, clear=False)
+    @patch("scripts.qqbot_webhook_bridge.subprocess.run")
+    def test_send_to_qqbot_rejects_wrong_chat(self, mock_run):
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = json.dumps(
+            {
+                "success": True,
+                "platform": "qqbot",
+                "chat_id": "private-openid-1",
+                "message_id": "message-3",
+            }
+        )
+        mock_run.return_value.stderr = ""
+
+        with self.assertRaisesRegex(RuntimeError, "different QQBot chat"):
+            send_to_qqbot("群聊报告", hermes_path="/opt/hermes", timeout_seconds=30)
 
 
 if __name__ == "__main__":
