@@ -36,6 +36,13 @@ def extract_report_text(payload: Mapping[str, Any]) -> Optional[str]:
 
 def send_to_qqbot(content: str, *, hermes_path: str, timeout_seconds: int) -> dict[str, Any]:
     """Send one report through Hermes' already-configured QQBot channel."""
+    command_env = os.environ.copy()
+    group_openid = os.getenv("QQBOT_GROUP_OPENID", "").strip()
+    if group_openid:
+        # Keep Hermes' global/private home channel unchanged. This override is
+        # scoped to the bridge child process and routes only these reports.
+        command_env["QQBOT_HOME_CHANNEL"] = group_openid
+
     command = [
         hermes_path,
         "send",
@@ -50,6 +57,7 @@ def send_to_qqbot(content: str, *, hermes_path: str, timeout_seconds: int) -> di
         capture_output=True,
         text=True,
         timeout=timeout_seconds,
+        env=command_env,
     )
     if completed.returncode != 0:
         error = (completed.stderr or completed.stdout or "unknown Hermes error").strip()
