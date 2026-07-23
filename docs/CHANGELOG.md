@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] #2051 PR Review 的特权 `pull_request_target` 流程不再检出 fork PR head：敏感文件、标签、报告与 AI 审查统一通过 GitHub API 将 PR 元数据和 diff 作为数据读取，只执行主分支可信脚本；Python 语法、Flake8、确定性检查和离线测试继续由无 secrets 的 `pull_request` CI / `backend-gate` 执行，兼容 `actions/checkout` 新增的 fork checkout 安全保护。
 - [修复] 修复 Windows 上 mimetypes 冷启动时读取注册表导致的进程卡死
 - [新功能] 新增 loopback-only 自定义 Webhook 到 Hermes QQBot channel 的适配脚本，支持 Bearer 校验，并将报告正文作为普通消息参数传入以保持真实换行，不经过 agent 生成或改写消息。
+- [新功能] QQ 群支持通过“@机器人 a股报告”被动读取 7 天内最新 A 股决策摘要；无缓存时后台触发单实例分析，用户稍后再次查询结果，全程绕过 Agent。
+- [修复] QQ 被动 A 股报告改为按标的生成紧凑详情并校验全量代码覆盖；Hermes 的最多 5 个分片全部复用入站 `msg_id`，避免仅首个分片成功、9 个标的只显示前 2 个的问题。
+- [改进] 新增 A 股报告 7 天清理命令；QQ 模板展示决策仪表盘及全部标的的资讯、持仓建议、行情技术、护栏计划、数据风险和信号板块，宽表压缩为紧凑字段，并在超过被动回复容量时拒绝发送部分结果。
+- [新功能] 新增 QQ 官方群主动推送脚本及 A 股 08:15 盘前、11:35 午间、15:35 盘后三个 systemd timer；盘后任务等待沪深市场 15:05–15:30 盘后固定价格交易结束，每轮先重新计算并校验报告确为本轮产物，再分片直推群聊，计算失败、休市跳过或报告未更新时拒绝推送旧内容。
 
 ## [3.27.0] - 2026-07-19
 

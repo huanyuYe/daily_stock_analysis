@@ -1,0 +1,22 @@
+[Unit]
+Description=Recalculate A-share report and push it to QQ group
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/data/service/daily-stock-analysis/.env
+ConditionPathExists=/home/ubuntu/.hermes/.env
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/data/service/daily-stock-analysis
+Environment=HOME=/root
+EnvironmentFile=/data/service/daily-stock-analysis/.env
+EnvironmentFile=/home/ubuntu/.hermes/.env
+EnvironmentFile=/data/service/daily-stock-analysis/.qqbot-bridge.env
+ExecStart=/usr/bin/flock -n /run/lock/daily-stock-analysis-qqbot-active.lock /data/service/daily-stock-analysis/venv/bin/python scripts/run_a_share_and_push_qq.py
+TimeoutStartSec=4h30m
+Nice=10
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
