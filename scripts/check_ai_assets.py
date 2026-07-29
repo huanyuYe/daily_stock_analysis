@@ -13,6 +13,7 @@ CLAUDE = ROOT / "CLAUDE.md"
 COPILOT = ROOT / ".github" / "copilot-instructions.md"
 INSTRUCTIONS_DIR = ROOT / ".github" / "instructions"
 CLAUDE_SKILLS_DIR = ROOT / ".claude" / "skills"
+AGENT_SKILLS_DIR = ROOT / ".agents" / "skills"
 
 REQUIRED_INSTRUCTION_FILES = {
     "backend.instructions.md",
@@ -90,6 +91,19 @@ def ensure_skill_files() -> None:
                 fail(f"{path.relative_to(ROOT)} must reference AGENTS.md as the rule source")
 
 
+def ensure_agent_skill_mirror() -> None:
+    ensure_file_exists(AGENT_SKILLS_DIR, "Codex-compatible agent skills directory")
+    for relative_path in REQUIRED_SKILL_FILES - {"README.md"}:
+        source = CLAUDE_SKILLS_DIR / relative_path
+        mirror = AGENT_SKILLS_DIR / relative_path
+        ensure_file_exists(mirror, "Codex-compatible skill mirror")
+        if source.read_bytes() != mirror.read_bytes():
+            fail(
+                f"{mirror.relative_to(ROOT)} must match canonical "
+                f"{source.relative_to(ROOT)}"
+            )
+
+
 def ensure_gitignore_rules() -> None:
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     for snippet in REQUIRED_GITIGNORE_SNIPPETS:
@@ -118,6 +132,7 @@ def main() -> None:
     ensure_copilot_entry()
     ensure_instruction_files()
     ensure_skill_files()
+    ensure_agent_skill_mirror()
     ensure_gitignore_rules()
     ensure_no_tracked_claude_artifacts()
     print("[ai-assets] OK")

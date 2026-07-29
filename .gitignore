@@ -78,6 +78,9 @@ run.sh
 
 verify_*.py
 
+# local QQBot runtime audit probe (environment-specific and temporary)
+/scripts/hermes-qqbot-group-audit.conf
+
 # ignore Claude workspace artifacts, but keep shared repo skills versioned
 .claude/*
 !.claude/skills/
