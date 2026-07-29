@@ -80,6 +80,12 @@ Return **only** a JSON object:
   "conditions_met": ["list of satisfied conditions"],
   "conditions_missed": ["list of unsatisfied conditions"],
   "score_adjustment": -20 to +20,
+  "event_assessment": {{
+    "alignment": "supportive|contradictory|mixed|unknown|not_applicable",
+    "official_event_count": 0,
+    "high_negative_event_count": 0,
+    "reason": "brief explanation of how recent events affect this skill"
+  }},
   "reasoning": "2-3 sentence skill evaluation"
 }}
 """

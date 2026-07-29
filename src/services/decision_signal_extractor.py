@@ -132,6 +132,9 @@ def build_decision_signal_payload_from_report(
     market_structure_summary = _extract_market_structure_summary(context_snapshot, result)
     if market_structure_summary:
         metadata.update(market_structure_summary)
+    stock_event_summary = _extract_stock_event_summary(context_snapshot)
+    if stock_event_summary:
+        metadata["stock_event_summary"] = stock_event_summary
     metadata["holding_state"] = _extract_holding_state(portfolio_context)
 
     payload: Dict[str, Any] = {
@@ -427,6 +430,35 @@ def _extract_market_structure_summary(
         "market_structure_risk_tags": risk_codes or None,
     }
     return {key: value for key, value in summary.items() if value not in (None, "", [], {})}
+
+
+def _extract_stock_event_summary(
+    context_snapshot: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    raw_summary = _as_mapping(_as_mapping(context_snapshot).get("stock_event_summary"))
+    if raw_summary.get("schema_version") != "a-share-stock-events-v1":
+        return None
+    allowed_fields = (
+        "schema_version",
+        "status",
+        "as_of",
+        "window_days",
+        "event_count",
+        "official_count",
+        "impact_counts",
+        "materiality_counts",
+        "high_negative_count",
+        "event_regime",
+        "event_score",
+        "source_status",
+        "warnings",
+    )
+    summary = {
+        field_name: raw_summary.get(field_name)
+        for field_name in allowed_fields
+        if raw_summary.get(field_name) not in (None, "", [], {})
+    }
+    return summary or None
 
 
 def _extract_data_quality(context_snapshot: Optional[Mapping[str, Any]], result: AnalysisResult) -> Optional[Any]:

@@ -5,6 +5,7 @@ Search tools — wraps SearchService methods as agent-callable tools.
 Tools:
 - search_stock_news: search latest stock news
 - search_comprehensive_intel: multi-dimensional intelligence search
+- get_stock_events: fetch structured A-share disclosures and stock news events
 """
 
 import logging
@@ -23,6 +24,12 @@ _INTEL_READ_POLICY = ToolPolicy.declared(
     read_only=True,
     side_effects=["network_read", "db_write_cache"],
     permissions=["intel:read"],
+    scope_dimensions=["stock"],
+)
+_EVENT_READ_POLICY = ToolPolicy.declared(
+    read_only=True,
+    side_effects=["network_read", "db_write_cache"],
+    permissions=["news:read"],
     scope_dimensions=["stock"],
 )
 
@@ -146,6 +153,44 @@ search_stock_news_tool = ToolDefinition(
 
 
 # ============================================================
+# get_stock_events
+# ============================================================
+
+def _handle_get_stock_events(stock_code: str, stock_name: str) -> dict:
+    """Fetch normalized A-share disclosures and stock-news events."""
+    from src.services.stock_event_service import AShareStockEventService
+
+    bundle = AShareStockEventService().fetch(stock_code, stock_name)
+    return bundle.to_dict(include_events=True)
+
+
+get_stock_events_tool = ToolDefinition(
+    name="get_stock_events",
+    description=(
+        "Fetch recent structured events for an A-share stock from CNINFO official "
+        "disclosures and EastMoney stock news. Returns event type, impact, "
+        "materiality, source tier, publication time, and a deterministic event "
+        "regime/score. Unsupported markets return status=unsupported."
+    ),
+    parameters=[
+        ToolParameter(
+            name="stock_code",
+            type="string",
+            description="Six-digit A-share stock code, e.g., '600519'.",
+        ),
+        ToolParameter(
+            name="stock_name",
+            type="string",
+            description="Stock name in Chinese, e.g., '贵州茅台'.",
+        ),
+    ],
+    handler=_handle_get_stock_events,
+    category="search",
+    policy=_EVENT_READ_POLICY,
+)
+
+
+# ============================================================
 # search_comprehensive_intel
 # ============================================================
 
@@ -222,5 +267,6 @@ search_comprehensive_intel_tool = ToolDefinition(
 
 ALL_SEARCH_TOOLS = [
     search_stock_news_tool,
+    get_stock_events_tool,
     search_comprehensive_intel_tool,
 ]

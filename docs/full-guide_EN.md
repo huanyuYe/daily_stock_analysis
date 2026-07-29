@@ -328,8 +328,23 @@ For the notification baseline, diagnostics, and deployment notes, see [Notificat
 | `SOCIAL_SENTIMENT_API_URL` | Stock Sentiment API endpoint (default `https://api.adanos.org`) | Optional |
 | `SEARXNG_BASE_URLS` | SearXNG self-hosted instances (quota-free fallback, enable format: json in settings.yml); when empty the app auto-discovers public instances | Optional |
 | `SEARXNG_PUBLIC_INSTANCES_ENABLED` | Auto-discover public SearXNG instances from `searx.space` when `SEARXNG_BASE_URLS` is empty (default `true`) | Optional |
+| `NEWS_STRATEGY_PROFILE` | News-window profile: `ultra_short` (1 day), `short` (3 days), `medium` (7 days), or `long` (30 days); the effective window is capped by `NEWS_MAX_AGE_DAYS` | Default `short` |
+| `NEWS_MAX_AGE_DAYS` | Maximum news age in days | Default `3` |
 
 > Behavior note: Search and social sentiment are optional enhancement services. If either service fails to initialize, the system logs a warning and degrades gracefully by skipping that stage without blocking the core analysis flow.
+
+### Structured A-share Stock Events
+
+A-share analysis now uses the existing AkShare dependency to fetch two best-effort, keyless stock-event channels:
+
+- CNINFO disclosures are normalized as `official` evidence and prioritized for regulatory, litigation, earnings, ownership, capital-action, and major-contract events.
+- EastMoney stock news is normalized as supplementary `media` evidence for market coverage and event context.
+
+Both channels use the effective window derived from `NEWS_STRATEGY_PROFILE` and `NEWS_MAX_AGE_DAYS`, with `NEWS_INTEL_FETCH_TIMEOUT_SEC` as the per-call timeout. Records are normalized into event type, impact direction, materiality, source tier, and publication time. The resulting summary includes `event_regime`, `event_score`, official-disclosure count, and high-materiality negative-event count. Each source fails open independently; if both sources fail, the event block is marked `missing` without blocking technical, fundamental, or report generation.
+
+The structured evidence is appended to the standard analysis `news_context`, prefetched into shared Agent context for IntelAgent, specialist skills, and DecisionAgent, and used by the `event_driven` strategy through `get_stock_events`. Only the low-sensitivity aggregate summary is copied into DecisionSignal metadata; the raw event array is excluded from that metadata. To preserve the existing report-evidence contract, event text actually supplied to the model remains part of analysis history `news_content`.
+
+Current boundary: event type and impact are deterministic keyword classifications and do not replace reading the source disclosure. `event_score` provides context and risk cues but does not override the final trading action. This version does not claim event-only return attribution or automatic strategy reweighting from outcomes.
 
 ### Futu Portfolio Import Configuration
 

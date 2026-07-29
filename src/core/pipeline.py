@@ -66,6 +66,10 @@ from src.services.daily_market_context import (
 from src.services.social_sentiment_service import SocialSentimentService
 from src.services.intelligence_service import IntelligenceService
 from src.services.market_hotspot_service import MarketHotspotService
+from src.services.stock_event_service import (
+    AShareStockEventService,
+    StockEventBundle,
+)
 from src.services.analysis_context_builder import (
     AnalysisContextBuilder,
     PipelineAnalysisArtifacts,
@@ -263,6 +267,7 @@ class StockAnalysisPipeline:
         except Exception as exc:
             logger.warning("搜索服务初始化失败，将以无搜索模式运行: %s", exc, exc_info=True)
             self.search_service = None
+        self.stock_event_service = AShareStockEventService(config=self.config)
         
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
         logger.info("已启用技术分析引擎（均线/趋势/量价指标）")
@@ -576,6 +581,16 @@ class StockAnalysisPipeline:
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
             news_context = None
+            stock_event_bundle = self._fetch_stock_event_bundle(
+                code=code,
+                stock_name=stock_name,
+            )
+            stock_event_summary = (
+                stock_event_bundle.summary
+                if stock_event_bundle is not None
+                and stock_event_bundle.status != "unsupported"
+                else None
+            )
             persisted_intelligence_context = self._load_persisted_intelligence_context(
                 code=code,
                 stock_name=stock_name,
@@ -620,6 +635,18 @@ class StockAnalysisPipeline:
                         logger.warning(f"{stock_name}({code}) 保存新闻情报失败: {e}")
             else:
                 logger.info(f"{stock_name}({code}) 搜索服务不可用，跳过情报搜索")
+
+            if stock_event_bundle is not None:
+                stock_event_context = stock_event_bundle.to_prompt_context()
+                if stock_event_context:
+                    news_context = (
+                        f"{stock_event_context}\n\n{news_context}"
+                        if news_context
+                        else stock_event_context
+                    )
+                    news_result_count = (news_result_count or 0) + len(
+                        stock_event_bundle.events
+                    )
 
             # Step 4.5: Social sentiment intelligence (US stocks only)
             if self.social_sentiment_service is not None and self.social_sentiment_service.is_available and is_us_stock_code(code):
@@ -822,6 +849,7 @@ class StockAnalysisPipeline:
                         chip_data=chip_data,
                         analysis_context_pack_overview=analysis_context_pack_overview,
                         market_phase_summary=market_phase_summary,
+                        stock_event_summary=stock_event_summary,
                     )
                     result.diagnostic_context_snapshot = context_snapshot
                     saved_history_id = self.db.save_analysis_history(
@@ -1343,6 +1371,32 @@ class StockAnalysisPipeline:
             if trend_result:
                 initial_context["trend_result"] = self._safe_to_dict(trend_result)
 
+            stock_event_bundle = self._fetch_stock_event_bundle(
+                code=code,
+                stock_name=stock_name,
+            )
+            stock_event_summary = (
+                stock_event_bundle.summary
+                if stock_event_bundle is not None
+                and stock_event_bundle.status != "unsupported"
+                else None
+            )
+            if (
+                stock_event_bundle is not None
+                and stock_event_bundle.status != "unsupported"
+            ):
+                initial_context["stock_events"] = stock_event_bundle.to_dict(
+                    include_events=True
+                )
+                stock_event_context = stock_event_bundle.to_prompt_context()
+                if stock_event_context:
+                    initial_context["news_context"] = stock_event_context
+                    logger.info(
+                        "[%s] Agent mode: injected %s structured stock events",
+                        code,
+                        len(stock_event_bundle.events),
+                    )
+
             # Agent path: inject social sentiment as news_context so both
             # executor (_build_user_message) and orchestrator (ctx.set_data)
             # can consume it through the existing news_context channel
@@ -1644,6 +1698,7 @@ class StockAnalysisPipeline:
                         chip_data=chip_data,
                         analysis_context_pack_overview=analysis_context_pack_overview,
                         market_phase_summary=market_phase_summary,
+                        stock_event_summary=stock_event_summary,
                     )
                     result.diagnostic_context_snapshot = agent_context_snapshot
                     agent_context_snapshot["stock_name"] = resolved_stock_name
@@ -2533,6 +2588,7 @@ class StockAnalysisPipeline:
         news_result_count: Optional[int] = None,
         analysis_context_pack_overview: Optional[Dict[str, Any]] = None,
         market_phase_summary: Optional[Dict[str, Any]] = None,
+        stock_event_summary: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         构建分析上下文快照
@@ -2554,6 +2610,8 @@ class StockAnalysisPipeline:
             snapshot["analysis_context_pack_overview"] = analysis_context_pack_overview
         if market_phase_summary is not None:
             snapshot[MARKET_PHASE_SUMMARY_KEY] = market_phase_summary
+        if stock_event_summary is not None:
+            snapshot["stock_event_summary"] = stock_event_summary
         diagnostic_snapshot = current_diagnostic_snapshot()
         if diagnostic_snapshot is not None:
             snapshot["diagnostics"] = diagnostic_snapshot
@@ -2721,6 +2779,37 @@ class StockAnalysisPipeline:
             except Exception as exc:
                 logger.warning("回写通知诊断快照失败（fail-open）: %s", exc)
 
+    def _fetch_stock_event_bundle(
+        self,
+        *,
+        code: str,
+        stock_name: str,
+    ) -> Optional[StockEventBundle]:
+        """Fetch structured A-share events without blocking the main pipeline."""
+        service = getattr(self, "stock_event_service", None)
+        if service is None:
+            return None
+        try:
+            bundle = service.fetch(code, stock_name)
+            if bundle.status in {"available", "degraded"}:
+                logger.info(
+                    "%s(%s) structured stock events: status=%s count=%s official=%s",
+                    stock_name,
+                    code,
+                    bundle.status,
+                    len(bundle.events),
+                    bundle.summary.get("official_count"),
+                )
+            return bundle
+        except Exception as exc:
+            logger.warning(
+                "%s(%s) structured stock event fetch failed (fail-open): %s",
+                stock_name,
+                code,
+                type(exc).__name__,
+            )
+            return None
+
     def _load_persisted_intelligence_context(
         self,
         *,
@@ -2842,6 +2931,12 @@ class StockAnalysisPipeline:
                 "yesterday": {},
             }
 
+        stock_event_summary = initial_context.get("stock_events")
+        event_count = (
+            stock_event_summary.get("event_count")
+            if isinstance(stock_event_summary, dict)
+            else None
+        )
         return PipelineAnalysisArtifacts(
             code=code,
             stock_name=stock_name,
@@ -2854,7 +2949,7 @@ class StockAnalysisPipeline:
             chip_data=initial_context.get("chip_distribution"),
             fundamental_context=fundamental_context,
             news_context=initial_context.get("news_context"),
-            news_result_count=None,
+            news_result_count=event_count,
             metadata={
                 "query_id": query_id,
                 "trigger_source": self.query_source,
@@ -2904,6 +2999,7 @@ class StockAnalysisPipeline:
         sanitized.pop("analysis_context_pack", None)
         sanitized.pop("analysis_context_pack_summary", None)
         sanitized.pop("daily_market_context_summary", None)
+        sanitized.pop("stock_events", None)
         enhanced_context = sanitized.get("enhanced_context")
         if isinstance(enhanced_context, dict):
             enhanced_context = dict(enhanced_context)

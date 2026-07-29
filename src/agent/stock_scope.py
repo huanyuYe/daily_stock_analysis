@@ -19,6 +19,7 @@ SWITCH_CLEANUP_KEYS = {
     "chip_distribution",
     "trend_result",
     "news_context",
+    "stock_events",
     "fundamental_context",
     "market_structure_context",
     "analysis_context_pack_summary",

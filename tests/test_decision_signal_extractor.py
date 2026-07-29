@@ -127,6 +127,22 @@ def test_build_payload_maps_report_context_and_price_plan() -> None:
         "analysis_context_pack_overview": {
             "data_quality": {"overall_score": 91, "level": "good"},
         },
+        "stock_event_summary": {
+            "schema_version": "a-share-stock-events-v1",
+            "status": "available",
+            "as_of": "2026-07-29T08:00:00+00:00",
+            "window_days": 3,
+            "event_count": 2,
+            "official_count": 1,
+            "impact_counts": {"positive": 1, "negative": 1},
+            "materiality_counts": {"high": 1, "medium": 1},
+            "high_negative_count": 1,
+            "event_regime": "mixed",
+            "event_score": -5,
+            "source_status": {"cninfo": "success", "eastmoney": "success"},
+            "warnings": [],
+            "events": [{"title": "raw event must not enter signal metadata"}],
+        },
     }
 
     payload = build_decision_signal_payload_from_report(
@@ -174,6 +190,8 @@ def test_build_payload_maps_report_context_and_price_plan() -> None:
         "session_date": "2026-06-15",
         "minutes_to_close": 120,
     }
+    assert payload["metadata"]["stock_event_summary"]["event_regime"] == "mixed"
+    assert "events" not in payload["metadata"]["stock_event_summary"]
     assert payload["metadata"]["holding_state"] == "holding"
 
 
