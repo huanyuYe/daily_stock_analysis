@@ -51,6 +51,8 @@ _AUX_LIMITATION_STATUSES = {
     ContextFieldStatus.FETCH_FAILED,
     ContextFieldStatus.FALLBACK,
     ContextFieldStatus.STALE,
+    ContextFieldStatus.PARTIAL,
+    ContextFieldStatus.ESTIMATED,
 }
 
 
@@ -381,6 +383,7 @@ def _build_fundamentals_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisC
         "status": raw_status or None,
         "coverage": coverage,
         "source_chain": source_chain,
+        "coverage_score": _fundamental_coverage_score(coverage),
     }
     metadata = {key: value for key, value in metadata.items() if value not in (None, {}, [])}
 
@@ -510,7 +513,13 @@ def _build_data_quality(
     weighted_sum = 0
     for key, weight in _QUALITY_BLOCK_WEIGHTS.items():
         status = _quality_block_status(blocks, key)
-        score = _STATUS_SCORES.get(status, _STATUS_SCORES[ContextFieldStatus.MISSING])
+        if key == "fundamentals":
+            score = _fundamental_block_score(blocks.get(key), status)
+        else:
+            score = _STATUS_SCORES.get(
+                status,
+                _STATUS_SCORES[ContextFieldStatus.MISSING],
+            )
         block_scores[key] = score
         weighted_sum += score * weight
 
@@ -538,6 +547,42 @@ def _quality_block_status(
         return ContextFieldStatus(str(status))
     except ValueError:
         return ContextFieldStatus.MISSING
+
+
+def _fundamental_block_score(
+    block: Optional[AnalysisContextBlock],
+    fallback_status: ContextFieldStatus,
+) -> int:
+    if block is not None:
+        score = block.metadata.get("coverage_score")
+        if isinstance(score, (int, float)) and not isinstance(score, bool):
+            return max(0, min(100, int(round(float(score)))))
+    return _STATUS_SCORES.get(
+        fallback_status,
+        _STATUS_SCORES[ContextFieldStatus.MISSING],
+    )
+
+
+def _fundamental_coverage_score(coverage: Dict[str, Any]) -> Optional[int]:
+    """Score actual sub-block coverage instead of trusting top-level partial."""
+    if not coverage:
+        return None
+    status_scores = {
+        "ok": 100,
+        "available": 100,
+        "partial": 65,
+        "not_supported": 35,
+        "failed": 25,
+        "fetch_failed": 25,
+        "missing": 25,
+    }
+    values = [
+        status_scores.get(str(value or "").strip().lower(), 25)
+        for value in coverage.values()
+    ]
+    if not values:
+        return None
+    return int(round(sum(values) / len(values)))
 
 
 def _quality_level(score: int) -> str:

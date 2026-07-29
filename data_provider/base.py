@@ -3115,7 +3115,8 @@ class DataFetcherManager:
     def get_fundamental_context(
         self,
         stock_code: str,
-        budget_seconds: Optional[float] = None
+        budget_seconds: Optional[float] = None,
+        realtime_quote: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Aggregate fundamental blocks with fail-open semantics.
@@ -3180,7 +3181,11 @@ class DataFetcherManager:
             remaining_seconds = max(0.0, remaining_seconds - consumed_ms / 1000.0)
 
         valuation_timeout = min(fetch_timeout, remaining_seconds)
-        if valuation_timeout > 0:
+        if realtime_quote is not None:
+            quote_payload = realtime_quote
+            valuation_err = None
+            valuation_ms = 0
+        elif valuation_timeout > 0:
             quote_payload, valuation_err, valuation_ms = self._run_with_retry(
                 lambda: self.get_realtime_quote(stock_code),
                 valuation_timeout,
@@ -3214,41 +3219,171 @@ class DataFetcherManager:
             [valuation_err] if valuation_err else [],
         )
 
-        # growth / earnings / institution (one AkShare call)
-        if remaining_seconds <= 0:
-            bundle_status = "failed"
-            bundle_payload: Dict[str, Any] = {}
-            bundle_errors = ["fundamental stage timeout"]
-            bundle_ms = 0
-        else:
-            bundle_timeout = min(fetch_timeout, remaining_seconds)
-            bundle_payload, bundle_err_msg, bundle_ms = self._run_with_retry(
-                lambda: self._fundamental_adapter.get_fundamental_bundle(stock_code),
-                bundle_timeout,
-                "fundamental_bundle",
-            )
-            _consume_budget(bundle_ms)
-            if not isinstance(bundle_payload, dict):
-                bundle_status = "failed"
-                bundle_payload = {}
-                bundle_errors = ["fundamental_bundle failed"]
-                if bundle_err_msg:
-                    bundle_errors.append(bundle_err_msg)
-            else:
-                bundle_status = str(bundle_payload.get("status", "not_supported"))
-                bundle_errors = [bundle_err_msg] if bundle_err_msg else []
+        # Fetch the fast financial indicators independently from slower optional
+        # earnings/institution datasets. This preserves a successful report even
+        # when a whole-market supplemental endpoint times out.
+        bundle_payload: Dict[str, Any] = {
+            "status": "not_supported",
+            "growth": {},
+            "earnings": {},
+            "institution": {},
+            "source_chain": [],
+            "errors": [],
+        }
+        stage_chains: Dict[str, List[Dict[str, Any]]] = {
+            "financial": [],
+            "earnings": [],
+            "institution": [],
+        }
+        stage_errors: Dict[str, List[str]] = {
+            "financial": [],
+            "earnings": [],
+            "institution": [],
+        }
+        stage_statuses: Dict[str, str] = {
+            "financial": "not_supported",
+            "earnings": "not_supported",
+            "institution": "not_supported",
+        }
 
-        bundle_chain = self._normalize_source_chain(
-            bundle_payload.get("source_chain", []),
-            "fundamental_bundle",
-            bundle_status,
-            bundle_ms,
-        ) if isinstance(bundle_payload, dict) else self._normalize_source_chain(
-            None,
-            "fundamental_bundle",
-            bundle_status,
-            bundle_ms,
-        )
+        def _merge_adapter_payload(payload: Any) -> None:
+            if not isinstance(payload, dict):
+                return
+            for key in ("growth", "earnings", "institution"):
+                value = payload.get(key)
+                if isinstance(value, dict):
+                    bundle_payload[key].update(value)
+
+        def _run_adapter_stage(
+            method_name: str,
+            timeout_seconds: float,
+            task_name: str,
+            stage_name: str,
+        ) -> None:
+            if timeout_seconds <= 0:
+                stage_statuses[stage_name] = "failed"
+                stage_errors[stage_name].append(
+                    f"{task_name} skipped: stage budget exhausted"
+                )
+                stage_chains[stage_name] = self._normalize_source_chain(
+                    None,
+                    task_name,
+                    "failed",
+                    0,
+                )
+                return
+            method = getattr(self._fundamental_adapter, method_name)
+            payload, error, duration_ms = self._run_with_retry(
+                lambda: method(stock_code),
+                timeout_seconds,
+                task_name,
+            )
+            _consume_budget(duration_ms)
+            payload_status = (
+                str(payload.get("status", "not_supported"))
+                if isinstance(payload, dict)
+                else "failed"
+            )
+            payload_entries = (
+                payload.get("source_chain")
+                if isinstance(payload, dict)
+                else None
+            )
+            payload_errors = (
+                payload.get("errors")
+                if isinstance(payload, dict)
+                else []
+            )
+            has_stage_data = (
+                isinstance(payload, dict)
+                and any(
+                    self._has_meaningful_payload(payload.get(key))
+                    for key in ("growth", "earnings", "institution")
+                )
+            )
+            if isinstance(payload_errors, list):
+                stage_errors[stage_name].extend(payload_errors)
+            if error:
+                stage_errors[stage_name].append(error)
+                if not has_stage_data:
+                    payload_status = "failed"
+            stage_statuses[stage_name] = payload_status
+            stage_chains[stage_name] = self._normalize_source_chain(
+                payload_entries,
+                task_name,
+                payload_status,
+                duration_ms,
+            )
+            _merge_adapter_payload(payload)
+
+        if remaining_seconds > 0:
+            financial_budget = min(
+                fetch_timeout,
+                remaining_seconds,
+                max(0.6, remaining_seconds * 0.45),
+            )
+            _run_adapter_stage(
+                "get_financial_bundle",
+                financial_budget,
+                "fundamental_financials",
+                "financial",
+            )
+
+        if remaining_seconds > 0:
+            reserve_for_market_signals = min(
+                2.0,
+                max(0.5, remaining_seconds * 0.3),
+            )
+            supplemental_budget = max(
+                0.0,
+                remaining_seconds - reserve_for_market_signals,
+            )
+            earnings_budget = min(
+                fetch_timeout,
+                supplemental_budget * 0.65,
+                1.0,
+            )
+            _run_adapter_stage(
+                "get_earnings_bundle",
+                earnings_budget,
+                "fundamental_earnings",
+                "earnings",
+            )
+
+        if remaining_seconds > 0:
+            reserve_for_market_signals = min(
+                2.0,
+                max(0.5, remaining_seconds * 0.5),
+            )
+            institution_budget = min(
+                fetch_timeout,
+                max(0.0, remaining_seconds - reserve_for_market_signals),
+                0.8,
+            )
+            _run_adapter_stage(
+                "get_institution_bundle",
+                institution_budget,
+                "fundamental_institution",
+                "institution",
+            )
+
+        all_stage_errors = [
+            error
+            for stage_name in ("financial", "earnings", "institution")
+            for error in stage_errors[stage_name]
+        ]
+        if (
+            bundle_payload["growth"]
+            or bundle_payload["earnings"]
+            or bundle_payload["institution"]
+        ):
+            bundle_status = "partial"
+        elif all_stage_errors:
+            bundle_status = "failed"
+        else:
+            bundle_status = "not_supported"
+        bundle_payload["status"] = bundle_status
+        bundle_payload["errors"].extend(all_stage_errors)
         growth_payload = bundle_payload.get("growth", {}) if isinstance(bundle_payload, dict) else {}
         earnings_payload = bundle_payload.get("earnings", {}) if isinstance(bundle_payload, dict) else {}
         institution_payload = bundle_payload.get("institution", {}) if isinstance(bundle_payload, dict) else {}
@@ -3299,33 +3434,60 @@ class DataFetcherManager:
                 dividend_payload["yield_formula"] = "ttm_cash_dividend_per_share / latest_price * 100"
             earnings_payload["dividend"] = dividend_payload
 
-        adapter_errors = list(bundle_payload.get("errors", [])) if isinstance(bundle_payload, dict) else []
-        adapter_errors.extend(bundle_errors)
-        growth_errors = list(adapter_errors)
-        earnings_errors = list(adapter_errors)
-        earnings_errors.extend(earnings_extra_errors)
-        institution_errors = list(adapter_errors)
+        financial_chain = stage_chains["financial"]
+        growth_chain = financial_chain
+        earnings_chain = (
+            financial_chain
+            if isinstance(earnings_payload.get("financial_report"), dict)
+            else []
+        ) + stage_chains["earnings"]
+        institution_chain = stage_chains["institution"]
 
-        growth_status = self._infer_block_status(growth_payload, bundle_status)
-        earnings_status = self._infer_block_status(earnings_payload, bundle_status)
-        institution_status = self._infer_block_status(institution_payload, bundle_status)
+        growth_errors = list(stage_errors["financial"])
+        earnings_errors = list(stage_errors["financial"])
+        earnings_errors.extend(stage_errors["earnings"])
+        earnings_errors.extend(earnings_extra_errors)
+        institution_errors = list(stage_errors["institution"])
+
+        def _combined_stage_status(*stage_names: str) -> str:
+            statuses = [stage_statuses[name] for name in stage_names]
+            if "failed" in statuses:
+                return "failed"
+            if "partial" in statuses:
+                return "partial"
+            if all(status == "not_supported" for status in statuses):
+                return "not_supported"
+            return "partial"
+
+        growth_status = self._infer_block_status(
+            growth_payload,
+            stage_statuses["financial"],
+        )
+        earnings_status = self._infer_block_status(
+            earnings_payload,
+            _combined_stage_status("financial", "earnings"),
+        )
+        institution_status = self._infer_block_status(
+            institution_payload,
+            stage_statuses["institution"],
+        )
 
         result_ctx["growth"] = self._build_fundamental_block(
             growth_status,
             growth_payload,
-            bundle_chain,
+            growth_chain,
             growth_errors,
         )
         result_ctx["earnings"] = self._build_fundamental_block(
             earnings_status,
             earnings_payload,
-            bundle_chain,
+            earnings_chain,
             earnings_errors,
         )
         result_ctx["institution"] = self._build_fundamental_block(
             institution_status,
             institution_payload,
-            bundle_chain,
+            institution_chain,
             institution_errors,
         )
 

@@ -447,6 +447,54 @@ def normalize_report_signal_attribution(payload: Optional[Dict[str, Any]]) -> No
         normalize_dashboard_signal_attribution(dashboard)
 
 
+def align_signal_attribution_with_data_quality(
+    dashboard: Optional[Dict[str, Any]],
+    analysis_context_pack_overview: Optional[Dict[str, Any]],
+) -> bool:
+    """Remove unsupported fundamental contribution and renormalize weights.
+
+    Returns True when the dashboard was adjusted.
+    """
+    if not isinstance(dashboard, dict):
+        return False
+    signal_attr = dashboard.get("signal_attribution")
+    if not isinstance(signal_attr, dict):
+        return False
+    if not isinstance(analysis_context_pack_overview, dict):
+        return False
+
+    blocks = analysis_context_pack_overview.get("blocks")
+    fundamental_status = None
+    if isinstance(blocks, list):
+        for block in blocks:
+            if isinstance(block, dict) and block.get("key") == "fundamentals":
+                fundamental_status = str(block.get("status") or "").strip().lower()
+                break
+
+    data_quality = analysis_context_pack_overview.get("data_quality")
+    fundamental_score = None
+    if isinstance(data_quality, dict):
+        block_scores = data_quality.get("block_scores")
+        if isinstance(block_scores, dict):
+            raw_score = block_scores.get("fundamentals")
+            if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool):
+                fundamental_score = float(raw_score)
+
+    unsupported_statuses = {"missing", "not_supported", "fetch_failed"}
+    should_zero = fundamental_status in unsupported_statuses
+    if fundamental_score is not None and fundamental_score < 50:
+        should_zero = True
+    if not should_zero:
+        return False
+
+    current = signal_attr.get("fundamentals")
+    if current in (0, 0.0, "0", "0%"):
+        return False
+    signal_attr["fundamentals"] = 0
+    normalize_signal_attribution_values(signal_attr)
+    return True
+
+
 def signal_attribution_weight_items(signal_attr: Any) -> List[Tuple[str, int]]:
     """Return displayable attribution weights as (key, integer percent) pairs."""
     if not isinstance(signal_attr, dict):

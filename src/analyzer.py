@@ -3828,6 +3828,8 @@ class GeminiAnalyzer:
             ttm_cash = dividend_metrics.get("ttm_cash_dividend_per_share", "N/A")
             ttm_count = dividend_metrics.get("ttm_event_count", "N/A")
             report_date = financial_report.get("report_date", "N/A")
+            forecast_summary = earnings_data.get("forecast_summary", "N/A")
+            quick_report_summary = earnings_data.get("quick_report_summary", "N/A")
             prompt += f"""
 ### 财报与分红（价值投资口径）
 | 指标 | 数值 | 说明 |
@@ -3835,11 +3837,19 @@ class GeminiAnalyzer:
 | 最近报告期 | {report_date} | 来自结构化财报字段 |
 | 营业收入 | {financial_report.get('revenue', 'N/A')} | |
 | 归母净利润 | {financial_report.get('net_profit_parent', 'N/A')} | |
-| 经营现金流 | {financial_report.get('operating_cash_flow', 'N/A')} | |
+| 经营现金流 | {financial_report.get('operating_cash_flow', 'N/A')} | 绝对金额缺失时不得用比率代替 |
+| 每股经营现金流 | {financial_report.get('operating_cash_flow_per_share', 'N/A')} | 元/股 |
+| 经营现金流同比 | {financial_report.get('operating_cash_flow_yoy', 'N/A')} | % |
 | ROE | {financial_report.get('roe', 'N/A')} | |
+| 毛利率 | {financial_report.get('gross_margin', 'N/A')} | % |
+| 资产负债率 | {financial_report.get('debt_ratio', 'N/A')} | % |
+| 业绩预告 | {forecast_summary} | 仅使用匹配股票与报告期的数据 |
+| 业绩快报 | {quick_report_summary} | 仅使用匹配股票与报告期的数据 |
 | 近12个月每股现金分红 | {ttm_cash} | 仅现金分红、税前口径 |
 | TTM 股息率 | {ttm_yield} | 公式：近12个月每股现金分红 / 当前价格 × 100% |
 | TTM 分红事件数 | {ttm_count} | |
+| 财务来源 | {financial_report.get('source_id', 'N/A')} | |
+| 核验状态 | {financial_report.get('verification_status', 'N/A')} | single_source 表示尚未完成双源核验 |
 
 > 若上述字段为 N/A 或缺失，请明确写“数据缺失，无法判断”，禁止编造。
 """
@@ -3929,6 +3939,32 @@ class GeminiAnalyzer:
 | 资料日期 | {institution_data.get('date', 'N/A')} | 来源 {institution_data.get('source', 'N/A')} |
 
 > 三大法人是台股的筹码过滤器（相当于 A 股主力资金/龙虎榜的角色，但口径不同、不可混用）：外资与投信同向净买支持价格、同向净卖压制价格。请据此判断台股筹码结构，不要在有本数据时写“筹码结构：数据缺失”。
+"""
+        elif (
+            isinstance(institution_data, dict)
+            and any(
+                institution_data.get(key) is not None
+                for key in (
+                    "institution_count",
+                    "institution_holding_ratio",
+                    "shareholder_count",
+                )
+            )
+        ):
+            prompt += f"""
+### A股机构与股东结构（财报期口径）
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| 机构数量 | {institution_data.get('institution_count', 'N/A')} | |
+| 机构数量变化 | {institution_data.get('institution_count_change', 'N/A')} | |
+| 机构持股比例 | {institution_data.get('institution_holding_ratio', 'N/A')} | % |
+| 机构持股变化 | {institution_data.get('institution_holding_change', 'N/A')} | 百分点/接口原始口径 |
+| 股东户数 | {institution_data.get('shareholder_count', 'N/A')} | |
+| 股东户数变化 | {institution_data.get('shareholder_count_change', 'N/A')} | |
+| 报告期 | {institution_data.get('report_period', 'N/A')} | |
+| 核验状态 | {institution_data.get('verification_status', 'N/A')} | single_source 表示尚未完成双源核验 |
+
+> 机构和股东数据必须结合报告期判断，不得把旧季度默认值当作当前持仓。
 """
 
         # 添加筹码分布数据

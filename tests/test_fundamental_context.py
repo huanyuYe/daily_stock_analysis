@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import unittest
+from contextlib import contextmanager
 from threading import BoundedSemaphore, Event
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -36,6 +37,45 @@ class _DummyBoardFetcher:
 
     def get_belong_board(self, _stock_code: str):
         return self._boards
+
+
+@contextmanager
+def _patch_cn_bundle(bundle):
+    common = {
+        "status": bundle.get("status", "not_supported"),
+        "source_chain": bundle.get("source_chain", []),
+        "errors": bundle.get("errors", []),
+    }
+    with patch(
+        "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_financial_bundle",
+        return_value={
+            **common,
+            "growth": bundle.get("growth", {}),
+            "earnings": {
+                key: value
+                for key, value in bundle.get("earnings", {}).items()
+                if key == "financial_report"
+            },
+            "institution": {},
+        },
+    ), patch(
+        "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_earnings_bundle",
+        return_value={
+            **common,
+            "growth": {},
+            "earnings": bundle.get("earnings", {}),
+            "institution": {},
+        },
+    ), patch(
+        "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_institution_bundle",
+        return_value={
+            **common,
+            "growth": {},
+            "earnings": {},
+            "institution": bundle.get("institution", {}),
+        },
+    ):
+        yield
 
 
 class TestFundamentalContext(unittest.TestCase):
@@ -175,7 +215,7 @@ class TestFundamentalContext(unittest.TestCase):
             circ_mv=4.0e10,
             source=SimpleNamespace(value="tencent"),
         )
-        # Mock get_fundamental_bundle so growth/earnings/institution are not_supported (no network).
+        # Mock split adapter stages so no network is used.
         bundle = {
             "status": "not_supported",
             "growth": {},
@@ -186,10 +226,7 @@ class TestFundamentalContext(unittest.TestCase):
         }
         with patch("src.config.get_config", return_value=cfg), \
                 patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch(
-                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle",
-                    return_value=bundle,
-                ):
+                _patch_cn_bundle(bundle):
             ctx = manager.get_fundamental_context("159915")
         self.assertEqual(ctx["market"], "cn")
         self.assertIn(ctx["status"], ("partial", "not_supported"))
@@ -234,15 +271,16 @@ class TestFundamentalContext(unittest.TestCase):
             circ_mv=7.0e10,
             source=SimpleNamespace(value="tencent"),
         )
-        with patch("src.config.get_config", return_value=cfg), \
-                patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch("data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle", return_value={
+        bundle = {
                     "growth": {"revenue_yoy": 10.1, "net_profit_yoy": 8.5},
                     "earnings": {"forecast_summary": "预增"},
                     "institution": {"institution_holding_change": 1.2},
                     "source_chain": ["growth:akshare"],
                     "errors": [],
-                }), \
+                }
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", return_value=quote), \
+                _patch_cn_bundle(bundle), \
                 patch.object(manager, "get_capital_flow_context", return_value={"status": "partial", "source_chain": []}), \
                 patch.object(manager, "get_dragon_tiger_context", return_value={"status": "partial", "source_chain": []}), \
                 patch.object(manager, "get_board_context", return_value={"status": "partial", "source_chain": []}):
@@ -252,6 +290,46 @@ class TestFundamentalContext(unittest.TestCase):
         self.assertIn("growth", ctx)
         self.assertIn("capital_flow", ctx)
         self.assertIn("dragon_tiger", ctx)
+
+    def test_cn_fundamental_context_reuses_prefetched_quote(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        cfg = SimpleNamespace(
+            enable_fundamental_pipeline=True,
+            fundamental_cache_ttl_seconds=0,
+            fundamental_stage_timeout_seconds=1.5,
+            fundamental_fetch_timeout_seconds=0.8,
+            fundamental_retry_max=1,
+        )
+        quote = SimpleNamespace(
+            price=50.0,
+            pe_ratio=12.3,
+            pb_ratio=2.1,
+            total_mv=1.0e11,
+            circ_mv=7.0e10,
+            source=SimpleNamespace(value="tencent"),
+        )
+        bundle = {
+            "status": "partial",
+            "growth": {"revenue_yoy": 10.1},
+            "earnings": {},
+            "institution": {},
+            "source_chain": ["financial:test"],
+            "errors": [],
+        }
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote") as quote_fetch, \
+                _patch_cn_bundle(bundle), \
+                patch.object(manager, "get_capital_flow_context", return_value={"status": "not_supported", "source_chain": []}), \
+                patch.object(manager, "get_dragon_tiger_context", return_value={"status": "not_supported", "source_chain": []}), \
+                patch.object(manager, "get_board_context", return_value={"status": "not_supported", "source_chain": []}):
+            ctx = manager.get_fundamental_context(
+                "600519",
+                budget_seconds=1.5,
+                realtime_quote=quote,
+            )
+
+        quote_fetch.assert_not_called()
+        self.assertEqual(ctx["valuation"]["data"]["pe_ratio"], 12.3)
 
     def test_fundamental_context_derives_ttm_dividend_yield_from_quote_price(self) -> None:
         manager = DataFetcherManager(fetchers=[])
@@ -270,9 +348,7 @@ class TestFundamentalContext(unittest.TestCase):
             circ_mv=7.0e10,
             source=SimpleNamespace(value="tencent"),
         )
-        with patch("src.config.get_config", return_value=cfg), \
-                patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch("data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle", return_value={
+        bundle = {
                     "status": "partial",
                     "growth": {},
                     "earnings": {
@@ -285,7 +361,10 @@ class TestFundamentalContext(unittest.TestCase):
                     "institution": {},
                     "source_chain": [],
                     "errors": [],
-                }), \
+                }
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", return_value=quote), \
+                _patch_cn_bundle(bundle), \
                 patch.object(manager, "get_capital_flow_context", return_value={"status": "not_supported", "source_chain": []}), \
                 patch.object(manager, "get_dragon_tiger_context", return_value={"status": "not_supported", "source_chain": []}), \
                 patch.object(manager, "get_board_context", return_value={"status": "not_supported", "source_chain": []}):
@@ -312,9 +391,7 @@ class TestFundamentalContext(unittest.TestCase):
             circ_mv=7.0e10,
             source=SimpleNamespace(value="tencent"),
         )
-        with patch("src.config.get_config", return_value=cfg), \
-                patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch("data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle", return_value={
+        bundle = {
                     "status": "partial",
                     "growth": {},
                     "earnings": {
@@ -326,7 +403,10 @@ class TestFundamentalContext(unittest.TestCase):
                     "institution": {},
                     "source_chain": [],
                     "errors": [],
-                }), \
+                }
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", return_value=quote), \
+                _patch_cn_bundle(bundle), \
                 patch.object(manager, "get_capital_flow_context", return_value={"status": "not_supported", "source_chain": []}), \
                 patch.object(manager, "get_dragon_tiger_context", return_value={"status": "not_supported", "source_chain": []}), \
                 patch.object(manager, "get_board_context", return_value={"status": "not_supported", "source_chain": []}):
@@ -376,10 +456,7 @@ class TestFundamentalContext(unittest.TestCase):
 
         with patch("src.config.get_config", return_value=cfg), \
                 patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch(
-                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle",
-                    return_value=bundle,
-                ), \
+                _patch_cn_bundle(bundle), \
                 patch.object(manager, "get_capital_flow_context", side_effect=_capital_flow_side_effect), \
                 patch.object(manager, "get_dragon_tiger_context", side_effect=_dragon_tiger_side_effect), \
                 patch.object(manager, "get_board_context", side_effect=_boards_side_effect):
@@ -460,10 +537,7 @@ class TestFundamentalContext(unittest.TestCase):
         }
         with patch("src.config.get_config", return_value=cfg), \
                 patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch(
-                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle",
-                    return_value=bundle,
-                ):
+                _patch_cn_bundle(bundle):
             ctx = manager.get_fundamental_context("600519")
 
         self.assertEqual(ctx["coverage"].get("valuation"), "partial")

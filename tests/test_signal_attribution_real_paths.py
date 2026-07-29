@@ -9,7 +9,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.utils.data_processing import normalize_signal_attribution_values, normalize_dashboard_signal_attribution
+from src.utils.data_processing import (
+    align_signal_attribution_with_data_quality,
+    normalize_dashboard_signal_attribution,
+    normalize_signal_attribution_values,
+)
 from src.schemas.report_schema import Dashboard, SignalAttribution
 
 # AnalysisResult 在 analyzer.py 中定义
@@ -74,6 +78,38 @@ class TestNormalizeDashboardSignalAttribution:
     def test_signal_attribution_none(self):
         dashboard = {"signal_attribution": None}
         normalize_dashboard_signal_attribution(dashboard)  # 不应报错
+
+    def test_low_quality_fundamentals_are_removed_and_weights_renormalized(self):
+        dashboard = {
+            "signal_attribution": {
+                "technical_indicators": 55,
+                "news_sentiment": 20,
+                "fundamentals": 15,
+                "market_conditions": 10,
+            }
+        }
+        overview = {
+            "blocks": [{"key": "fundamentals", "status": "partial"}],
+            "data_quality": {"block_scores": {"fundamentals": 36}},
+        }
+
+        adjusted = align_signal_attribution_with_data_quality(
+            dashboard,
+            overview,
+        )
+
+        assert adjusted is True
+        attribution = dashboard["signal_attribution"]
+        assert attribution["fundamentals"] == 0
+        assert sum(
+            attribution[key]
+            for key in (
+                "technical_indicators",
+                "news_sentiment",
+                "fundamentals",
+                "market_conditions",
+            )
+        ) == 100
 
 
 class TestParseResponseIntegration:

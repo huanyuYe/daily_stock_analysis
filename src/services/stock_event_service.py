@@ -84,7 +84,7 @@ _NEGATIVE_PHRASES = (
     "减持", "预亏", "亏损", "业绩下滑", "净利润下降", "下修", "终止重组",
     "终止上市", "退市", "立案", "调查", "处罚", "警示函", "问询函",
     "风险提示", "诉讼", "仲裁", "冻结", "违约", "失信", "停产", "召回",
-    "控制权变更风险", "大额解禁",
+    "控制权变更风险", "大额解禁", "限售解禁",
 )
 _HIGH_MATERIALITY_TYPES = frozenset(
     {
@@ -112,6 +112,7 @@ class StockEvent:
     event_type: str
     impact: str
     materiality: str
+    event_date: Optional[date] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -122,6 +123,7 @@ class StockEvent:
             "channel": self.channel,
             "source_tier": self.source_tier,
             "published_at": self.published_at.isoformat() if self.published_at else None,
+            "event_date": self.event_date.isoformat() if self.event_date else None,
             "event_type": self.event_type,
             "impact": self.impact,
             "materiality": self.materiality,
@@ -223,9 +225,14 @@ class StockEventBundle:
         ]
         for index, event in enumerate(self.events[:max_events], 1):
             published = event.published_at.date().isoformat() if event.published_at else "时间未知"
+            event_date_text = (
+                f"；事件日期={event.event_date.isoformat()}"
+                if event.event_date
+                else ""
+            )
             lines.append(
                 f"{index}. [{event.source_tier}/{event.event_type}/"
-                f"{event.impact}/{event.materiality}] {published} {event.title}"
+                f"{event.impact}/{event.materiality}] {published}{event_date_text} {event.title}"
             )
             if event.summary:
                 lines.append(f"   摘要：{event.summary[:280]}")
@@ -275,7 +282,11 @@ class AShareStockEventService:
                 window_days=window_days,
                 status="unsupported",
                 events=(),
-                source_status={"cninfo": "unsupported", "eastmoney": "unsupported"},
+                source_status={
+                    "cninfo": "unsupported",
+                    "eastmoney": "unsupported",
+                    "restricted_release": "unsupported",
+                },
             )
 
         safe_max_events = max(1, min(int(max_events), 30))
@@ -298,7 +309,11 @@ class AShareStockEventService:
                 window_days=window_days,
                 status="missing",
                 events=(),
-                source_status={"cninfo": "unavailable", "eastmoney": "unavailable"},
+                source_status={
+                    "cninfo": "unavailable",
+                    "eastmoney": "unavailable",
+                    "restricted_release": "unavailable",
+                },
                 warnings=("akshare_unavailable",),
             )
             self._put_cache(cache_key, bundle)
@@ -348,6 +363,30 @@ class AShareStockEventService:
             logger.warning("EastMoney stock news fetch failed for %s: %s", code, type(exc).__name__)
             source_status["eastmoney"] = "failed"
             warnings.append("eastmoney_fetch_failed")
+
+        try:
+            restricted_release = self._call(
+                akshare_module.stock_restricted_release_queue_sina,
+                symbol=code,
+                call_name="stock_restricted_release_queue_sina",
+            )
+            release_events = self._parse_restricted_release_records(
+                _to_records(restricted_release),
+                stock_code=code,
+                as_of=as_of,
+            )
+            events.extend(release_events)
+            source_status["restricted_release"] = (
+                "success" if release_events else "empty"
+            )
+        except Exception as exc:
+            logger.warning(
+                "Restricted-release fetch failed for %s: %s",
+                code,
+                type(exc).__name__,
+            )
+            source_status["restricted_release"] = "failed"
+            warnings.append("restricted_release_fetch_failed")
 
         normalized_events = tuple(
             self._deduplicate_and_sort(events)[:safe_max_events]
@@ -448,6 +487,54 @@ class AShareStockEventService:
             )
         return events
 
+    @classmethod
+    def _parse_restricted_release_records(
+        cls,
+        records: Iterable[Dict[str, Any]],
+        *,
+        stock_code: str,
+        as_of: datetime,
+    ) -> List[StockEvent]:
+        events: List[StockEvent] = []
+        as_of_date = as_of.astimezone(_CHINA_TZ).date()
+        window_end = as_of_date + timedelta(days=30)
+        for row in records:
+            row_code = normalize_stock_code(str(row.get("代码") or "").strip())
+            if row_code and row_code != stock_code:
+                continue
+            release_dt = _parse_datetime(row.get("解禁日期"))
+            if release_dt is None:
+                continue
+            release_date = release_dt.date()
+            if not as_of_date <= release_date <= window_end:
+                continue
+
+            shares = _safe_number(row.get("解禁数量"))
+            market_value = _safe_number(row.get("解禁股流通市值"))
+            is_large = bool(market_value is not None and market_value >= 5)
+            title = (
+                f"{stock_code}未来30日{'大额' if is_large else ''}限售解禁"
+            )
+            details = [f"解禁日期 {release_date.isoformat()}"]
+            if shares is not None:
+                details.append(f"解禁数量 {shares:g} 万股")
+            if market_value is not None:
+                details.append(f"解禁流通市值 {market_value:g} 亿元")
+            announcement = _parse_datetime(row.get("公告日期"))
+            event = cls._build_event(
+                title=title,
+                summary="；".join(details),
+                url="",
+                source="新浪财经限售解禁",
+                channel="sina_restricted_release",
+                source_tier="structured",
+                published_at=announcement or as_of,
+                event_date=release_date,
+                materiality_override="high" if is_large else None,
+            )
+            events.append(event)
+        return events
+
     @staticmethod
     def _build_event(
         *,
@@ -458,6 +545,8 @@ class AShareStockEventService:
         channel: str,
         source_tier: str,
         published_at: Optional[datetime],
+        event_date: Optional[date] = None,
+        materiality_override: Optional[str] = None,
     ) -> StockEvent:
         combined = f"{title} {summary}".lower()
         event_type = _classify_event_type(combined)
@@ -470,6 +559,8 @@ class AShareStockEventService:
             materiality = "medium"
         else:
             materiality = "low" if source_tier != "official" else "medium"
+        if materiality_override in {"high", "medium", "low"}:
+            materiality = materiality_override
         return StockEvent(
             title=title,
             summary=summary,
@@ -481,6 +572,7 @@ class AShareStockEventService:
             event_type=event_type,
             impact=impact,
             materiality=materiality,
+            event_date=event_date,
         )
 
     @staticmethod
@@ -622,6 +714,18 @@ def _clean_text(value: Any) -> str:
     text = re.sub(r"<[^>]+>", " ", str(value))
     text = re.sub(r"\s+", " ", text).strip()
     return "" if text.lower() in {"nan", "nat", "none"} else text
+
+
+def _safe_number(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    text = str(value).strip().replace(",", "").replace("%", "")
+    if not text or text.lower() in {"nan", "nat", "none", "-"}:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
 
 
 def _clean_url(value: Any) -> str:

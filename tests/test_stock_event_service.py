@@ -35,7 +35,15 @@ def _direct_call(func, **kwargs):
     return func(**kwargs)
 
 
-def _akshare(*, notices=None, news=None, notice_error=None, news_error=None):
+def _akshare(
+    *,
+    notices=None,
+    news=None,
+    restricted_releases=None,
+    notice_error=None,
+    news_error=None,
+    restricted_release_error=None,
+):
     def fetch_notices(**_kwargs):
         if notice_error is not None:
             raise notice_error
@@ -46,9 +54,15 @@ def _akshare(*, notices=None, news=None, notice_error=None, news_error=None):
             raise news_error
         return news or []
 
+    def fetch_restricted_releases(**_kwargs):
+        if restricted_release_error is not None:
+            raise restricted_release_error
+        return restricted_releases or []
+
     return SimpleNamespace(
         stock_zh_a_disclosure_report_cninfo=fetch_notices,
         stock_news_em=fetch_news,
+        stock_restricted_release_queue_sina=fetch_restricted_releases,
     )
 
 
@@ -141,7 +155,11 @@ def test_fetch_is_fail_open_when_one_source_fails() -> None:
 
     assert bundle.status == "degraded"
     assert len(bundle.events) == 1
-    assert bundle.source_status == {"cninfo": "failed", "eastmoney": "success"}
+    assert bundle.source_status == {
+        "cninfo": "failed",
+        "eastmoney": "success",
+        "restricted_release": "empty",
+    }
     assert bundle.warnings == ("cninfo_fetch_failed",)
 
 
@@ -149,6 +167,7 @@ def test_fetch_skips_non_a_share_without_touching_sources() -> None:
     akshare = SimpleNamespace(
         stock_zh_a_disclosure_report_cninfo=MagicMock(),
         stock_news_em=MagicMock(),
+        stock_restricted_release_queue_sina=MagicMock(),
     )
     service = AShareStockEventService(
         config=_config(),
@@ -164,6 +183,7 @@ def test_fetch_skips_non_a_share_without_touching_sources() -> None:
     assert bundle.events == ()
     akshare.stock_zh_a_disclosure_report_cninfo.assert_not_called()
     akshare.stock_news_em.assert_not_called()
+    akshare.stock_restricted_release_queue_sina.assert_not_called()
 
 
 def test_empty_a_share_context_keeps_explicit_no_data_summary() -> None:
@@ -181,6 +201,54 @@ def test_empty_a_share_context_keeps_explicit_no_data_summary() -> None:
     assert bundle.to_prompt_context() == ""
 
 
+def test_fetch_adds_upcoming_restricted_release_as_structured_risk() -> None:
+    service = AShareStockEventService(
+        config=_config(),
+        akshare_module=_akshare(
+            restricted_releases=[
+                {
+                    "代码": "600519",
+                    "名称": "贵州茅台",
+                    "解禁日期": "2026-08-10",
+                    "解禁数量": 1200,
+                    "解禁股流通市值": 8.5,
+                    "公告日期": "2026-06-01",
+                },
+                {
+                    "代码": "600519",
+                    "名称": "贵州茅台",
+                    "解禁日期": "2026-10-01",
+                    "解禁数量": 300,
+                    "解禁股流通市值": 1.0,
+                    "公告日期": "2026-06-01",
+                },
+                {
+                    "代码": "000001",
+                    "名称": "平安银行",
+                    "解禁日期": "2026-08-05",
+                    "解禁数量": 999,
+                    "解禁股流通市值": 9.0,
+                    "公告日期": "2026-06-01",
+                },
+            ],
+        ),
+        call_with_timeout=_direct_call,
+        now_provider=lambda: NOW,
+    )
+
+    bundle = service.fetch("600519", "贵州茅台")
+
+    assert bundle.status == "available"
+    assert len(bundle.events) == 1
+    event = bundle.events[0]
+    assert event.channel == "sina_restricted_release"
+    assert event.event_date.isoformat() == "2026-08-10"
+    assert event.event_type == "ownership_change"
+    assert event.impact == "negative"
+    assert event.materiality == "high"
+    assert "事件日期=2026-08-10" in bundle.to_prompt_context()
+
+
 def test_cninfo_query_dates_follow_shanghai_calendar() -> None:
     captured = {}
 
@@ -193,6 +261,7 @@ def test_cninfo_query_dates_follow_shanghai_calendar() -> None:
         akshare_module=SimpleNamespace(
             stock_zh_a_disclosure_report_cninfo=fetch_notices,
             stock_news_em=lambda **_kwargs: [],
+            stock_restricted_release_queue_sina=lambda **_kwargs: [],
         ),
         call_with_timeout=_direct_call,
         now_provider=lambda: datetime(2026, 7, 29, 18, 0, tzinfo=timezone.utc),

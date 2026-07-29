@@ -382,12 +382,16 @@ Current boundary: event type and impact are deterministic keyword classification
 | `FUNDAMENTAL_CACHE_MAX_ENTRIES` | Maximum entries for fundamental cache (evicted by time within TTL) | `256` | Optional |
 
 > **Behavior Notes:**
-> - **A-shares**: Returns aggregated capabilities by `valuation/growth/earnings/institution/capital_flow/dragon_tiger/boards`.
+> - **A-shares**: Returns aggregated capabilities by `valuation/growth/earnings/institution/capital_flow/dragon_tiger/boards`. The free route prefers per-stock EastMoney financial indicators with a THS abstract fallback, and efinance historical capital flow before slower AkShare flow fallbacks.
 > - **ETFs**: Returns available items, marks missing capabilities as `not_supported`, and does not affect the original flow overall.
 > - **US/HK stocks**: Returns `valuation/growth/earnings/belong_boards` (sourced from `info.sector`/`info.industry`) via the yfinance adapter; `institution/capital_flow/dragon_tiger/boards` stay `not_supported` because no offshore data feed exists today. Falls back to a full `not_supported` block if yfinance is unavailable or returns empty payloads. Still fail-open.
 > - **Japanese/Korean stocks**: Current MVP uses Yfinance daily/basic quote coverage only; `institution`, `capital_flow`, `dragon_tiger`, and `boards` are not fully supported and degrade to `not_supported` (see [market boundaries](market-support.md)).
 > - **Taiwan stocks**: On top of the US/HK offshore base path, the `institution` block additionally surfaces raw 三大法人 (institutional) net buy/sell figures (TWSE T86 / TPEx, default-on, fail-open — stays `not_supported` when data is unavailable); `capital_flow`, `dragon_tiger`, and `boards` remain `not_supported`.
 > - Any exception uses fail-open logic, only logs errors without affecting the main technical/news/chip pipeline.
+> - Core statements and market signals take priority within the total stage budget. Forecast/quick-report and institution datasets are short-budget best-effort supplements and cannot overwrite already-successful statement, capital-flow, dragon-tiger, or board results.
+> - Free A-share statements are explicitly marked `verification_status=single_source`. Absolute operating cash flow remains `null` when unavailable; per-share cash flow and its YoY rate use separate fields and are never relabeled as the absolute amount.
+> - Structured A-share events combine official disclosures, stock news, and upcoming 30-day restricted-share releases for normal analysis, event-driven strategy, and risk analysis.
+> - The detailed free-source coverage, remaining gaps, and Tushare point thresholds are recorded in [A-share fundamental and event data-source decision](a-share-fundamental-data-sources.md) (Chinese).
 > - **Field contracts**:
 >   - `fundamental_context.belong_boards` = related board list for the stock; A-shares are sourced from AkShare board membership, US/HK from yfinance `info.sector`/`info.industry`, `[]` when unavailable;
 >   - `fundamental_context.boards.data` = `sector_rankings` (sector rise/fall leaderboard, structure `{top, bottom}`; not provided for US/HK today);

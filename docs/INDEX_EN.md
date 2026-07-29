@@ -26,6 +26,7 @@ This is the entry point for project documentation. The README covers the project
 | [Full Guide (EN)](full-guide_EN.md) | Environment setup, run modes, configuration, deployment paths, and common issues |
 | [FAQ (EN)](FAQ_EN.md) | Common configuration, model, notification, deployment, and runtime issues |
 | [Data-source stability diagrams](data-source-stability.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | Existing-source routing, fallback chains, and recommended configuration profiles |
+| [A-share fundamental and event data-source decision](a-share-fundamental-data-sources.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | Free statement, capital-flow, and event routes; remaining gaps; Tushare point thresholds and upgrade order |
 | [Changelog](CHANGELOG.md) | Release notes, capability changes, and migration notes |
 
 ## Configuration

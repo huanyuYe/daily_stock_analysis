@@ -91,6 +91,7 @@ from src.services.decision_signal_extractor import (
     resolve_decision_signal_action_fields,
 )
 from src.services.decision_signal_summary import summarize_decision_signal
+from src.utils.data_processing import align_signal_attribution_with_data_quality
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
 from src.core.trading_calendar import (
@@ -510,6 +511,7 @@ class StockAnalysisPipeline:
                         'fundamental_stage_timeout_seconds',
                         FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT,
                     ),
+                    realtime_quote=realtime_quote,
                 )
             except Exception as e:
                 logger.warning(f"{stock_name}({code}) 基本面聚合失败: {e}")
@@ -831,6 +833,14 @@ class StockAnalysisPipeline:
                     result.market_structure_context = market_structure_context
                 result.market_phase_summary = market_phase_summary
                 result.analysis_context_pack_overview = analysis_context_pack_overview
+                if align_signal_attribution_with_data_quality(
+                    result.dashboard,
+                    analysis_context_pack_overview,
+                ):
+                    logger.info(
+                        "[signal_attribution] Removed unsupported fundamental contribution for %s",
+                        code,
+                    )
                 self._refresh_decision_action_for_final_result(
                     result,
                     report_type=report_type.value,
@@ -1634,6 +1644,14 @@ class StockAnalysisPipeline:
                     result.market_structure_context = market_structure_context
                 result.market_phase_summary = market_phase_summary
                 result.analysis_context_pack_overview = analysis_context_pack_overview
+                if align_signal_attribution_with_data_quality(
+                    result.dashboard,
+                    analysis_context_pack_overview,
+                ):
+                    logger.info(
+                        "[signal_attribution] Removed unsupported fundamental contribution for %s",
+                        code,
+                    )
                 final_action = normalize_decision_action(getattr(result, "action", None))
                 if isinstance(result.dashboard, dict):
                     result.dashboard.pop("agent_disagreement_explanation", None)

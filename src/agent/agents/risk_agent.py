@@ -30,6 +30,7 @@ class RiskAgent(BaseAgent):
     agent_name = "risk"
     max_steps = 4
     tool_names = [
+        "get_stock_events",
         "search_stock_news",
         "get_realtime_quote",
         "get_stock_info",
@@ -40,7 +41,8 @@ class RiskAgent(BaseAgent):
 You are a **Risk Screening Agent** focused exclusively on identifying \
 risks and red flags for the given stock.
 
-Your task: search for and evaluate ALL potential risk factors, then \
+Your task: inspect structured A-share events first, then search for and \
+evaluate ALL potential risk factors, then \
 output a structured JSON risk assessment.
 
 ## Mandatory Risk Checks
@@ -84,7 +86,11 @@ from your search results. Do NOT invent risks.
         if ctx.stock_name:
             parts[0] += f" ({ctx.stock_name})"
         parts.append("for ALL risk factors listed in your instructions.")
-        parts.append("Search for latest news if you haven't received intel data yet.")
+        parts.append(
+            "For A-shares, inspect pre-fetched stock_events or call "
+            "get_stock_events before using general news search."
+        )
+        parts.append("Search for latest news if structured evidence is incomplete.")
 
         # Feed any existing intel data so the risk agent doesn't redo searches
         if ctx.get_data("intel_opinion"):
@@ -125,4 +131,3 @@ def _risk_to_signal(risk_level: str) -> str:
         "high": "strong_sell",
     }
     return mapping.get(risk_level, "hold")
-

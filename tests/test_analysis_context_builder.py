@@ -455,6 +455,33 @@ def test_data_quality_scores_fixed_blocks_and_limits_auxiliary_missing() -> None
     assert blank_news.data_quality.block_scores["news"] == 35
     assert "news: missing" not in blank_news.data_quality.limitations
 
+    mostly_failed_fundamentals = AnalysisContextBuilder.build(
+        _artifacts(
+            fundamental_context={
+                "status": "partial",
+                "coverage": {
+                    "valuation": "ok",
+                    "growth": "failed",
+                    "earnings": "failed",
+                    "institution": "failed",
+                    "capital_flow": "failed",
+                    "dragon_tiger": "failed",
+                    "boards": "failed",
+                },
+                "source_chain": [
+                    {"provider": "realtime_quote", "result": "ok"}
+                ],
+            }
+        )
+    )
+    assert (
+        mostly_failed_fundamentals.data_quality.block_scores["fundamentals"]
+        == 36
+    )
+    assert mostly_failed_fundamentals.data_quality.limitations == [
+        "fundamentals: partial"
+    ]
+
 
 def test_portfolio_block_is_auxiliary_and_does_not_change_quality_score() -> None:
     baseline = AnalysisContextBuilder.build(_artifacts())
