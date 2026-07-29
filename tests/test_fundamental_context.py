@@ -421,8 +421,8 @@ class TestFundamentalContext(unittest.TestCase):
         cfg = SimpleNamespace(
             enable_fundamental_pipeline=True,
             fundamental_cache_ttl_seconds=120,
-            fundamental_stage_timeout_seconds=1.5,
-            fundamental_fetch_timeout_seconds=0.8,
+            fundamental_stage_timeout_seconds=8.0,
+            fundamental_fetch_timeout_seconds=8.0,
             fundamental_retry_max=1,
         )
         quote = SimpleNamespace(
@@ -463,7 +463,9 @@ class TestFundamentalContext(unittest.TestCase):
             manager.get_fundamental_context("600519")
 
         self.assertGreater(budgets.get("capital_flow", 0.0), 0.0)
+        self.assertLessEqual(budgets.get("capital_flow", 0.0), 1.5)
         self.assertGreater(budgets.get("dragon_tiger", 0.0), 0.0)
+        self.assertLessEqual(budgets.get("dragon_tiger", 0.0), 1.0)
         self.assertGreater(budgets.get("boards", 0.0), 0.0)
 
     def test_run_with_timeout_limits_hanging_workers(self) -> None:

@@ -3513,7 +3513,11 @@ class DataFetcherManager:
             )
             result_ctx["status"] = "partial"
         else:
-            capital_flow_budget = min(fetch_timeout, remaining_seconds)
+            capital_flow_budget = min(
+                fetch_timeout,
+                remaining_seconds,
+                1.5,
+            )
             capital_flow_start = time.time()
             result_ctx["capital_flow"] = self.get_capital_flow_context(
                 stock_code,
@@ -3521,7 +3525,11 @@ class DataFetcherManager:
             )
             _consume_budget(int((time.time() - capital_flow_start) * 1000))
 
-            dragon_tiger_budget = min(fetch_timeout, remaining_seconds)
+            dragon_tiger_budget = min(
+                fetch_timeout,
+                remaining_seconds,
+                1.0,
+            )
             dragon_tiger_start = time.time()
             result_ctx["dragon_tiger"] = self.get_dragon_tiger_context(
                 stock_code,
