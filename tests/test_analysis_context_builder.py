@@ -511,6 +511,8 @@ def test_portfolio_block_is_auxiliary_and_does_not_change_quality_score() -> Non
     assert portfolio.metadata == {"auxiliary": True, "quality_weighted": False}
     assert portfolio.items["quantity"].value == 100
     assert portfolio.items["price_available"].value is False
+    assert "account_id" not in portfolio.items
+    assert "account_name" not in portfolio.items
     assert "api_key" not in portfolio.items
     assert pack.data_quality.overall_score == baseline.data_quality.overall_score
     assert pack.data_quality.block_scores == baseline.data_quality.block_scores

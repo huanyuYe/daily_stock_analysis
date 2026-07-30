@@ -261,6 +261,85 @@ class PipelineMarketPhaseContextTestCase(unittest.TestCase):
         self.assertNotIn("daily_market_context_summary", snapshot["enhanced_context"])
         self.assertNotIn("avg_cost", str(snapshot))
 
+    def test_context_pack_summary_includes_sanitized_actual_hk_position(self):
+        pipeline = _make_pipeline(agent_mode=False, save_context_snapshot=True)
+        artifacts = pipeline._build_legacy_analysis_artifacts(
+            code="HK01810",
+            stock_name="小米集团",
+            market="hk",
+            phase=_phase_payload(),
+            context={"code": "HK01810", "today": {}, "yesterday": {}},
+            enhanced_context={},
+            realtime_quote=None,
+            trend_result=None,
+            chip_data=None,
+            fundamental_context={"market": "hk"},
+            news_context=None,
+            news_result_count=0,
+            query_id="q-portfolio-hk",
+            portfolio_context={
+                "account_id": 7,
+                "account_name": "Private Account",
+                "symbol": "HK01810",
+                "market": "hk",
+                "currency": "HKD",
+                "quantity": 100,
+                "avg_cost": 16.5,
+                "last_price": 18.2,
+                "unrealized_pnl_pct": 10.3,
+                "price_available": True,
+            },
+        )
+
+        summary, overview = pipeline._build_analysis_context_pack_outputs(
+            artifacts,
+            report_language="zh",
+            code="HK01810",
+            query_id="q-portfolio-hk",
+        )
+
+        self.assertIn("实际持仓上下文", summary)
+        self.assertIn("平均成本=16.5 HKD", summary)
+        self.assertIn("港股规则", summary)
+        self.assertNotIn("Private Account", summary)
+        self.assertIsNotNone(overview)
+
+    def test_pack_builder_failure_keeps_actual_us_position_prompt(self):
+        pipeline = _make_pipeline(agent_mode=True, save_context_snapshot=True)
+        artifacts = pipeline._build_agent_analysis_artifacts(
+            code="AAPL",
+            stock_name="Apple",
+            market="us",
+            phase={**_phase_payload(), "market": "us"},
+            initial_context={},
+            fundamental_context={"market": "us"},
+            query_id="q-portfolio-us",
+            portfolio_context={
+                "symbol": "AAPL",
+                "market": "us",
+                "currency": "USD",
+                "quantity": 5,
+                "avg_cost": 180,
+                "last_price": 195,
+                "price_available": True,
+            },
+        )
+
+        with patch(
+            "src.core.pipeline.AnalysisContextBuilder.build",
+            side_effect=RuntimeError("pack unavailable"),
+        ):
+            summary, overview = pipeline._build_analysis_context_pack_outputs(
+                artifacts,
+                report_language="en",
+                code="AAPL",
+                query_id="q-portfolio-us",
+            )
+
+        self.assertIn("Actual Portfolio Position", summary)
+        self.assertIn("US rules", summary)
+        self.assertIsNone(overview)
+
     def test_agent_analysis_artifacts_helper_maps_initial_context_zero_fetch(self):
         pipeline = _make_pipeline(agent_mode=True, save_context_snapshot=True)
         pipeline.query_source = "system"

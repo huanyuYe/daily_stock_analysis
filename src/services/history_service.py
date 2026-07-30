@@ -51,6 +51,7 @@ from src.schemas.decision_scale import extract_decision_guardrail_reason
 from src.utils.sniper_points import find_sniper_points
 from src.utils.data_processing import (
     extract_realtime_detail_fields,
+    format_signal_attribution_weights_line,
     normalize_model_used,
     parse_json_field,
     signal_attribution_has_content,
@@ -1066,9 +1067,15 @@ class HistoryService:
                 bias_status = localize_bias_status(raw_bias_status, report_language)
                 bias_emoji = get_bias_status_emoji(raw_bias_status)
                 report_lines.extend([
-                    f"| {labels['price_metrics_label']} | {labels['current_price_label']} |",
+                    f"| {labels['price_metrics_label']} | {labels['value_label']} |",
                     "|---------|------|",
-                    f"| {labels['current_price_label']} | {price_data.get('current_price', 'N/A')} |",
+                ])
+                if not getattr(result, "market_snapshot", None):
+                    report_lines.append(
+                        f"| {labels['current_price_label']} | "
+                        f"{price_data.get('current_price', 'N/A')} |"
+                    )
+                report_lines.extend([
                     f"| {labels['ma5_label']} | {price_data.get('ma5', 'N/A')} |",
                     f"| {labels['ma10_label']} | {price_data.get('ma10', 'N/A')} |",
                     f"| {labels['ma20_label']} | {price_data.get('ma20', 'N/A')} |",
@@ -1165,16 +1172,14 @@ class HistoryService:
             ])
             weight_items = signal_attribution_weight_items(signal_attr)
             if weight_items:
-                report_lines.append(f"**{labels.get('attribution_weights_label', '归因权重')}**:")
-                weight_labels = {
-                    "technical_indicators": ("📈", labels.get('technical_indicators_label', '技术指标')),
-                    "news_sentiment": ("📰", labels.get('news_sentiment_label', '新闻舆情')),
-                    "fundamentals": ("📊", labels.get('fundamentals_label', '基本面')),
-                    "market_conditions": ("🌐", labels.get('market_conditions_label', '市场环境')),
-                }
-                for key, value in weight_items:
-                    icon, label = weight_labels[key]
-                    report_lines.append(f"- {icon} {label}: {value}%")
+                weights_line = format_signal_attribution_weights_line(
+                    signal_attr,
+                    labels,
+                )
+                report_lines.append(
+                    f"**{labels.get('attribution_weights_label', '归因权重')}**: "
+                    f"{weights_line}"
+                )
                 report_lines.append("")
             bullish = signal_attr.get('strongest_bullish_signal')
             bearish = signal_attr.get('strongest_bearish_signal')

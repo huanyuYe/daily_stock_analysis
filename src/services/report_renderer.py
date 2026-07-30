@@ -42,6 +42,8 @@ from src.schemas.decision_action import (
     localize_action_label,
 )
 from src.utils.data_processing import (
+    compact_phase_data_limitations,
+    format_signal_attribution_weights_line,
     normalize_model_used,
     signal_attribution_has_content,
     signal_attribution_weight_items,
@@ -243,6 +245,8 @@ def render(
         "strategy_invalid_opinion_count": strategy_invalid_opinion_count,
         "signal_attribution_has_content": signal_attribution_has_content,
         "signal_attribution_weight_items": signal_attribution_weight_items,
+        "format_signal_attribution_weights_line": format_signal_attribution_weights_line,
+        "compact_phase_data_limitations": compact_phase_data_limitations,
     }
     if extra_context:
         safe_extra_context = dict(extra_context)

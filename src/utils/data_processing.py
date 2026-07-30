@@ -5,6 +5,7 @@ Shared data parsing and normalization helpers.
 
 import json
 import math
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -19,6 +20,17 @@ SIGNAL_ATTRIBUTION_SIGNAL_KEYS: Tuple[str, ...] = (
     "strongest_bullish_signal",
     "strongest_bearish_signal",
 )
+_PHASE_LIMITATION_STATUS_VALUES = {
+    "available",
+    "missing",
+    "not_supported",
+    "fallback",
+    "stale",
+    "estimated",
+    "partial",
+    "fetch_failed",
+}
+_PHASE_LIMITATION_BLOCK_RE = re.compile(r"^[a-z][a-z0-9_]*$", re.IGNORECASE)
 
 
 def normalize_model_used(value: Any) -> Optional[str]:
@@ -518,3 +530,52 @@ def signal_attribution_has_content(signal_attr: Any) -> bool:
     if any(value != 0 for _, value in signal_attribution_weight_items(signal_attr)):
         return True
     return any(bool(signal_attr.get(key)) for key in SIGNAL_ATTRIBUTION_SIGNAL_KEYS)
+
+
+def format_signal_attribution_weights_line(
+    signal_attr: Any,
+    labels: Dict[str, str],
+) -> str:
+    """Render attribution weights as one compact, localized Markdown line."""
+    weight_labels = {
+        "technical_indicators": ("📈", labels.get("technical_indicators_label", "技术指标")),
+        "news_sentiment": ("📰", labels.get("news_sentiment_label", "新闻舆情")),
+        "fundamentals": ("📊", labels.get("fundamentals_label", "基本面")),
+        "market_conditions": ("🌐", labels.get("market_conditions_label", "市场环境")),
+    }
+    parts: List[str] = []
+    for key, value in signal_attribution_weight_items(signal_attr):
+        icon, label = weight_labels[key]
+        parts.append(f"{icon} {label}: {value}%")
+    return " · ".join(parts)
+
+
+def compact_phase_data_limitations(value: Any) -> Dict[str, Any]:
+    """Separate human-readable limitations from compact machine status entries."""
+    if not isinstance(value, (list, tuple)):
+        return {"details": [], "status_line": ""}
+
+    details: List[str] = []
+    status_parts: List[str] = []
+    seen = set()
+    for item in value:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        block, separator, status = text.partition(":")
+        block = block.strip()
+        status = status.strip().lower()
+        if (
+            separator
+            and _PHASE_LIMITATION_BLOCK_RE.fullmatch(block)
+            and status in _PHASE_LIMITATION_STATUS_VALUES
+        ):
+            status_parts.append(f"{block}={status}")
+        else:
+            details.append(text)
+
+    return {
+        "details": details,
+        "status_line": " · ".join(status_parts),
+    }

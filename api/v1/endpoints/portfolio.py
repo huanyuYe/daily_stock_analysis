@@ -44,6 +44,7 @@ from src.services.portfolio_service import (
     PortfolioOversellError,
     PortfolioService,
 )
+from src.services.stock_code_utils import resolve_daily_stock_identity
 
 logger = logging.getLogger(__name__)
 
@@ -509,7 +510,22 @@ def _resolve_position_analysis_context(
             position_symbol = service._normalize_symbol_for_position(
                 str(position.get("symbol") or "")
             )
-            if position_symbol != target:
+            position_market = str(position.get("market") or "").strip().lower()
+            requested_identity = resolve_daily_stock_identity(
+                symbol,
+                market_hint=position_market or None,
+            )
+            position_identity = resolve_daily_stock_identity(
+                str(position.get("symbol") or ""),
+                market_hint=position_market or None,
+            )
+            identities_match = (
+                requested_identity is not None
+                and position_identity is not None
+                and requested_identity.market == position_identity.market
+                and requested_identity.normalized_code == position_identity.normalized_code
+            )
+            if position_symbol != target and not identities_match:
                 continue
             try:
                 quantity = float(position.get("quantity") or 0)
@@ -544,14 +560,19 @@ def _resolve_position_analysis_context(
         "quantity": position.get("quantity"),
         "avg_cost": position.get("avg_cost"),
         "total_cost": position.get("total_cost"),
+        "last_price": position.get("last_price"),
+        "market_value_base": position.get("market_value_base"),
         "unrealized_pnl_base": position.get("unrealized_pnl_base"),
         "unrealized_pnl_pct": position.get("unrealized_pnl_pct"),
+        "valuation_currency": position.get("valuation_currency"),
         "price_source": position.get("price_source"),
         "price_provider": position.get("price_provider"),
         "price_date": position.get("price_date"),
         "price_stale": bool(position.get("price_stale")),
         "price_available": bool(position.get("price_available", True)),
         "cost_method": snapshot.get("cost_method") or "fifo",
+        "data_quality": position.get("data_quality"),
+        "limitations": list(position.get("limitations") or []),
     }
 
 

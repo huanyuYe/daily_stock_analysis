@@ -160,7 +160,11 @@ class TestReportRenderer(unittest.TestCase):
                     "watch_conditions": ["放量突破"],
                     "next_check_time": "14:30",
                     "confidence_reason": "数据质量可用",
-                    "data_limitations": ["quote: stale"],
+                    "data_limitations": [
+                        "行情日期早于分析日期，现价判断仅供参考",
+                        "quote: stale",
+                        "technical: partial",
+                    ],
                 },
                 "battle_plan": {"sniper_points": {"stop_loss": "110"}},
             }
@@ -172,7 +176,9 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("盘中决策护栏", out)
         self.assertIn("盘中跟踪", out)
         self.assertIn("放量突破", out)
-        self.assertIn("quote: stale", out)
+        self.assertIn("quote=stale · technical=partial", out)
+        self.assertIn("- 行情日期早于分析日期，现价判断仅供参考", out)
+        self.assertNotIn("- quote: stale", out)
 
     def test_render_markdown_skips_context_only_phase_decision_shape(self) -> None:
         """Markdown skips mechanically shaped phase_decision without actionable content."""
@@ -354,12 +360,52 @@ class TestReportRenderer(unittest.TestCase):
             "turnover_rate": "0.8%",
             "source": "polygon",
         }
+        r.dashboard["data_perspective"] = {
+            "price_position": {
+                "current_price": "999.99",
+                "ma5": "179.00",
+                "ma10": "176.00",
+                "ma20": "170.00",
+                "bias_ma5": "0.75",
+                "support_level": "175.00",
+                "resistance_level": "185.00",
+            }
+        }
 
         out = render("markdown", [r], summary_only=False)
 
         self.assertIsNotNone(out)
         self.assertIn("Market Snapshot", out)
         self.assertIn("Volume Ratio", out)
+        self.assertNotIn("| Price | 999.99 |", out)
+        self.assertIn("| MA5 | 179.00 |", out)
+
+    def test_render_markdown_compacts_signal_attribution_weights(self) -> None:
+        r = _make_result(
+            dashboard={
+                "core_conclusion": {"one_sentence": "持有观望"},
+                "signal_attribution": {
+                    "technical_indicators": 45,
+                    "news_sentiment": 10,
+                    "fundamentals": 25,
+                    "market_conditions": 20,
+                    "strongest_bullish_signal": "均线多头",
+                    "strongest_bearish_signal": "估值偏高",
+                },
+            }
+        )
+
+        out = render("markdown", [r], summary_only=False)
+
+        self.assertIsNotNone(out)
+        self.assertIn(
+            "**归因权重**: 📈 技术指标: 45% · 📰 新闻舆情: 10% · "
+            "📊 基本面: 25% · 🌐 市场环境: 20%",
+            out,
+        )
+        self.assertNotIn("- 📈 技术指标: 45%", out)
+        self.assertIn("均线多头", out)
+        self.assertIn("估值偏高", out)
 
     def test_render_markdown_collapses_unavailable_chip_structure(self) -> None:
         r = _make_result(

@@ -82,9 +82,11 @@
 
 {% set price_data = data_persp.get('price_position', {}) %}
 {% if price_data %}
-| {{ labels.price_metrics_label }} | {{ labels.current_price_label }} |
+| {{ labels.price_metrics_label }} | {{ labels.value_label }} |
 |---------|------|
+{% if not result.market_snapshot %}
 | {{ labels.current_price_label }} | {{ price_data.get('current_price', 'N/A') }} |
+{% endif %}
 | {{ labels.ma5_label }} | {{ price_data.get('ma5', 'N/A') }} |
 | {{ labels.ma10_label }} | {{ price_data.get('ma10', 'N/A') }} |
 | {{ labels.ma20_label }} | {{ price_data.get('ma20', 'N/A') }} |
@@ -132,8 +134,14 @@
 **{{ labels.confidence_reason_label }}**: {{ phase_decision.get('confidence_reason') }}
 {% endif %}
 {% if phase_decision.get('data_limitations') %}
+{% set compact_limits = compact_phase_data_limitations(phase_decision.get('data_limitations')) %}
+{% if compact_limits.status_line %}
+**{{ labels.data_limitations_label }}**: {{ compact_limits.status_line }}
+{% endif %}
+{% if compact_limits.details and not compact_limits.status_line %}
 **{{ labels.data_limitations_label }}**:
-{% for limitation in phase_decision.get('data_limitations') %}
+{% endif %}
+{% for limitation in compact_limits.details %}
 - {{ limitation }}
 {% endfor %}
 {% endif %}
@@ -146,13 +154,7 @@
 ### 🎯 {{ labels.signal_attribution_heading }}
 
 {% if signal_attr_weights %}
-**{{ labels.attribution_weights_label }}**:
-{% for key, value in signal_attr_weights %}
-{% if key == 'technical_indicators' %}- 📈 {{ labels.technical_indicators_label }}: {{ value }}%{% endif %}
-{% if key == 'news_sentiment' %}- 📰 {{ labels.news_sentiment_label }}: {{ value }}%{% endif %}
-{% if key == 'fundamentals' %}- 💼 {{ labels.fundamentals_label }}: {{ value }}%{% endif %}
-{% if key == 'market_conditions' %}- 🌐 {{ labels.market_conditions_label }}: {{ value }}%{% endif %}
-{% endfor %}
+**{{ labels.attribution_weights_label }}**: {{ format_signal_attribution_weights_line(signal_attr, labels) }}
 {% endif %}
 
 {% if signal_attr.get('strongest_bullish_signal') %}

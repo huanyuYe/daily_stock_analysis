@@ -462,6 +462,11 @@ class PortfolioApiTestCase(unittest.TestCase):
         self.assertEqual(kwargs["portfolio_context"]["account_id"], account_id)
         self.assertEqual(kwargs["portfolio_context"]["quantity"], 10.0)
         self.assertEqual(kwargs["portfolio_context"]["cost_method"], "fifo")
+        self.assertEqual(kwargs["portfolio_context"]["last_price"], 110.0)
+        self.assertEqual(kwargs["portfolio_context"]["market_value_base"], 1100.0)
+        self.assertEqual(kwargs["portfolio_context"]["valuation_currency"], "CNY")
+        self.assertIn("data_quality", kwargs["portfolio_context"])
+        self.assertIn("limitations", kwargs["portfolio_context"])
 
     def test_position_analysis_matches_exchange_suffix_position_symbol(self) -> None:
         account_id = self._create_position(symbol="600519.SH", quantity=10)
@@ -519,6 +524,41 @@ class PortfolioApiTestCase(unittest.TestCase):
         self.assertEqual(kwargs["portfolio_context"]["symbol"], "HK01810")
         self.assertEqual(kwargs["portfolio_context"]["market"], "hk")
         self.assertEqual(kwargs["portfolio_context"]["currency"], "HKD")
+
+    def test_position_analysis_matches_us_suffix_to_bare_ticker_position(self) -> None:
+        account_id = self._create_position(
+            symbol="AAPL",
+            quantity=5,
+            market="us",
+            currency="USD",
+        )
+        accepted_task = SimpleNamespace(
+            task_id="task-portfolio-us",
+            trace_id="trace-portfolio-us",
+            stock_code="AAPL",
+            analysis_phase="auto",
+        )
+        queue = MagicMock()
+        queue.submit_tasks_batch.return_value = ([accepted_task], [])
+
+        with patch(
+            "src.services.portfolio_service.PortfolioService._fetch_realtime_position_price",
+            return_value=(None, None),
+        ), patch("api.v1.endpoints.portfolio.get_task_queue", return_value=queue):
+            resp = self.client.post(
+                "/api/v1/portfolio/positions/AAPL.US/analysis",
+                json={"account_id": account_id},
+            )
+
+        self.assertEqual(resp.status_code, 202, resp.text)
+        args, kwargs = queue.submit_tasks_batch.call_args
+        self.assertEqual(args[0], ["AAPL"])
+        self.assertEqual(kwargs["portfolio_context"]["symbol"], "AAPL")
+        self.assertEqual(kwargs["portfolio_context"]["market"], "us")
+        self.assertEqual(kwargs["portfolio_context"]["currency"], "USD")
+        self.assertEqual(kwargs["portfolio_context"]["quantity"], 5.0)
+        self.assertEqual(kwargs["portfolio_context"]["last_price"], 110.0)
+        self.assertEqual(kwargs["portfolio_context"]["valuation_currency"], "USD")
 
     def test_position_analysis_returns_404_for_missing_holding(self) -> None:
         resp = self.client.post("/api/v1/portfolio/positions/600519/analysis", json={})

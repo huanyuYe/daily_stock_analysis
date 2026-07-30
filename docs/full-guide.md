@@ -1010,7 +1010,11 @@ P6 将既有 `market_phase_summary` 与 `analysis_context_pack_overview` 复用�
 
 告警 phase 摘要来自触发时上下文：symbol 目标按股票市场推断，`target_scope=market` 直接使用 `cn|hk|us|jp|kr` 市场区域，账户级无法唯一定位时允许落为 `unknown`。pack overview 只来自评估器已带 overview 或最近 30 天历史 snapshot 的低敏 overview，缺失时返回 `null`，不伪造 pack，不自动触发轻量 LLM 分析。公开 source 取值为 `alert_trigger_market_context`、`analysis_history_snapshot`、`evaluator_snapshot`、`legacy_text` 或 `null`。
 
-持仓页新增手动单股分析入口，对应 `POST /api/v1/portfolio/positions/{symbol}/analysis`。请求字段为 `account_id`、`analysis_phase=auto|premarket|intraday|postmarket` 和 `force`；只有当前持仓快照中非零持仓可提交，无持仓返回 404，多账户同持一只股票但未传 `account_id` 返回 `400 ambiguous_position_account`。该入口沿用异步任务 accepted / duplicate 语义，`force` 只影响分析刷新，不绕过 in-flight duplicate。后端只把低敏 `portfolio_context` 传入内部 pipeline 和 context pack 的可选 `portfolio` block；该 block 不参与既有六块数据质量总分，也不会出现在任务列表或 SSE payload 中。
+持仓页新增手动单股分析入口，对应 `POST /api/v1/portfolio/positions/{symbol}/analysis`。请求字段为 `account_id`、`analysis_phase=auto|premarket|intraday|postmarket` 和 `force`；只有当前持仓快照中非零持仓可提交，无持仓返回 404，多账户同持一只股票但未传 `account_id` 返回 `400 ambiguous_position_account`。该入口沿用异步任务 accepted / duplicate 语义，`force` 只影响分析刷新，不绕过 in-flight duplicate。A 股、港股和美股持仓会把标的、市场/币种、数量、平均成本、总成本、最新价、估值、浮盈亏、价格状态和数据限制按固定白名单注入内部策略 Prompt，用于校准 `position_advice.has_position`、加减仓、止损和止盈；`AAPL.US` 与 `AAPL` 等价匹配。账户 ID、账户名称、任意扩展字段和凭据不会进入 Prompt，完整 `portfolio_context` 仍不会出现在任务列表、SSE payload 或公开历史快照中。
+
+跨市场持仓建议不会复用 A 股制度假设：港股与美股明确禁止套用 A 股 T+1 卖出限制和 10%/20% 涨跌停规则，并分别考虑港股交易时段/每手股数/港币汇率，以及美股盘前盘后/美元汇率/隔夜跳空；券商现金、融资或其它无法从本地持仓确认的规则必须以条件式风险提示表达。持仓 block 仍为辅助数据，不参与既有六块数据质量总分；价格、汇率或估值缺失、过期、部分可用时，策略必须降低置信度而不能编造数据。
+
+Markdown 报告相关渲染路径采用一致的无损压缩口径：默认生成器、Jinja 同步模板和历史详情在行情快照已经展示最新价时，不在数据透视重复当前价；默认生成器、Jinja 模板、单股通知和历史详情都把四项信号归因权重合并为一行；默认生成器与 Jinja 模板把 `quote: stale`、`technical: partial` 等机器状态合并为一行。风险正文、观察条件、最强多空信号、行动点位和仓位计划不做删减。
 
 历史列表、单股历史、StockBar 和详情会从 `context_snapshot` 提取 `market_phase_summary`；旧记录、缺失 snapshot 或解析失败返回 `null`。回测结果项增加 `market_phase` 与 `market_phase_summary`，结果列表和 performance/summary 查询支持 `analysis_phase=premarket|intraday|postmarket|unknown`；统计统一把 `intraday`、`lunch_break`、`closing_auction` 归入 intraday，把 `non_trading`、缺失和非法值归入 unknown。带 phase 过滤的回测查询会在 repository 层按 SQL 条件批量读取结果和 snapshot，先 bucket 再分页，并在 summary diagnostics 中返回 `phase_breakdown` 与 `raw_phase_counts`。
 

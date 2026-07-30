@@ -850,7 +850,11 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
                     "watch_conditions": ["放量突破"],
                     "next_check_time": "14:30",
                     "confidence_reason": "数据质量可用",
-                    "data_limitations": ["quote: stale"],
+                    "data_limitations": [
+                        "行情日期早于分析日期，现价判断仅供参考",
+                        "quote: stale",
+                        "technical: partial",
+                    ],
                 },
             },
         )
@@ -861,7 +865,46 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertIn("盘中跟踪", out)
         self.assertIn("等待确认", out)
         self.assertIn("放量突破", out)
-        self.assertIn("quote: stale", out)
+        self.assertIn("quote=stale · technical=partial", out)
+        self.assertIn("- 行情日期早于分析日期，现价判断仅供参考", out)
+        self.assertNotIn("- quote: stale", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_compacts_signal_attribution_weights(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="AAPL",
+            name="Apple",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="等待确认",
+            dashboard={
+                "core_conclusion": {"one_sentence": "等待确认"},
+                "signal_attribution": {
+                    "technical_indicators": 45,
+                    "news_sentiment": 10,
+                    "fundamentals": 25,
+                    "market_conditions": 20,
+                    "strongest_bullish_signal": "均线多头",
+                    "strongest_bearish_signal": "估值偏高",
+                },
+            },
+        )
+
+        out = service.generate_dashboard_report([result], report_date="2026-02-01")
+
+        self.assertIn(
+            "**归因权重**: 📈 技术指标: 45% · 📰 新闻舆情: 10% · "
+            "📊 基本面: 25% · 🌐 市场环境: 20%",
+            out,
+        )
+        self.assertNotIn("- 📈 技术指标: 45%", out)
+        self.assertIn("均线多头", out)
+        self.assertIn("估值偏高", out)
 
     @mock.patch("src.notification.get_config")
     def test_generate_dashboard_report_skips_context_only_phase_decision_default_renderer(

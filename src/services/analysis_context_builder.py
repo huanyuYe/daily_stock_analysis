@@ -470,22 +470,25 @@ def _build_portfolio_block(artifacts: PipelineAnalysisArtifacts) -> Optional[Ana
 
     item_status = status if status != ContextFieldStatus.AVAILABLE else ContextFieldStatus.AVAILABLE
     exposed_keys = (
-        "account_id",
-        "account_name",
         "symbol",
         "market",
         "currency",
         "quantity",
         "avg_cost",
         "total_cost",
+        "last_price",
+        "market_value_base",
         "unrealized_pnl_base",
         "unrealized_pnl_pct",
+        "valuation_currency",
         "price_source",
         "price_provider",
         "price_date",
         "price_stale",
         "price_available",
         "cost_method",
+        "data_quality",
+        "limitations",
     )
     items = {
         key: AnalysisContextItem(status=item_status, value=context.get(key))

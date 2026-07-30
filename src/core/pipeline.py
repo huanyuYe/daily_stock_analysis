@@ -50,6 +50,7 @@ from src.report_language import (
 from src.search_service import SearchService
 from src.analysis_context_pack_prompt import format_analysis_context_pack_prompt_section
 from src.analysis_context_pack_overview import render_analysis_context_pack_overview
+from src.portfolio_context_prompt import format_portfolio_context_prompt_section
 from src.market_phase_summary import MARKET_PHASE_SUMMARY_KEY, render_market_phase_summary
 from src.daily_market_context_guardrail import apply_daily_market_context_guardrail
 from src.agent.final_explanation import (
@@ -2983,12 +2984,17 @@ class StockAnalysisPipeline:
         code: str,
         query_id: str,
     ) -> Tuple[str, Optional[Dict[str, Any]]]:
+        portfolio_summary = format_portfolio_context_prompt_section(
+            artifacts.portfolio_context,
+            report_language=report_language,
+        )
         try:
             pack = AnalysisContextBuilder.build(artifacts)
             summary = format_analysis_context_pack_prompt_section(
                 pack,
                 report_language=report_language,
             )
+            summary = f"{summary}{portfolio_summary}"
             overview = render_analysis_context_pack_overview(
                 pack,
                 report_language=report_language,
@@ -3001,7 +3007,7 @@ class StockAnalysisPipeline:
                 query_id,
                 exc,
             )
-            return "", None
+            return portfolio_summary, None
 
     @staticmethod
     def _without_runtime_prompt_context(context: Dict[str, Any]) -> Dict[str, Any]:
