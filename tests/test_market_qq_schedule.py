@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,6 +48,28 @@ class MarketQQScheduleTest(unittest.TestCase):
         self.assertEqual(profile.phase, "premarket")
         with self.assertRaisesRegex(ValueError, "profile must be"):
             parse_profile("uk-premarket")
+
+    def test_script_entrypoint_bootstraps_project_import_path(self):
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "run_market_and_push_qq.py"
+        )
+        environment = dict(os.environ)
+        environment.pop("PYTHONPATH", None)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            completed = subprocess.run(
+                [sys.executable, str(script), "--help"],
+                cwd=tmpdir,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("--profile", completed.stdout)
 
     def test_market_filter_keeps_only_target_futu_holdings(self):
         holdings = ["600519", "HK00700", "AAPL", "MSFT", "HK09988"]

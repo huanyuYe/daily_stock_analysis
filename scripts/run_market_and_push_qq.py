@@ -13,6 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.core.trading_calendar import infer_market_phase
+
 try:
     from scripts.qqbot_active_report import push_content
     from scripts.qqbot_passive_report import (
@@ -128,8 +134,6 @@ def run_and_push(
 ) -> dict[str, object]:
     """Load positions read-only, analyze one market/phase, and push only fresh output."""
     if market_phase_loader is None:
-        from src.core.trading_calendar import infer_market_phase
-
         market_phase_loader = infer_market_phase
 
     calendar_phase = market_phase_loader(profile.market)
