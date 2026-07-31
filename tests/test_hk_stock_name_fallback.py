@@ -87,6 +87,17 @@ class TestHKRealtimeFallback(unittest.TestCase):
     """stock_hk_spot_em 失败时应 fallback 到 stock_hk_spot。"""
 
     def setUp(self):
+        def direct_akshare_call(func, *args, **kwargs):
+            kwargs.pop("timeout", None)
+            kwargs.pop("call_name", None)
+            return func(*args, **kwargs)
+
+        self.timeout_patcher = patch(
+            "data_provider.akshare_fetcher._akshare_call_with_timeout",
+            side_effect=direct_akshare_call,
+        )
+        self.timeout_patcher.start()
+        self.addCleanup(self.timeout_patcher.stop)
         self.fetcher = AkshareFetcher()
         akshare_fetcher_module._hk_realtime_cache.update({
             "data": None,
@@ -227,6 +238,28 @@ class TestHKRealtimeFallback(unittest.TestCase):
             quote = self.fetcher._get_hk_realtime_quote("HK00700")
 
         self.assertIsNone(quote)
+
+    @patch("data_provider.akshare_fetcher.get_realtime_circuit_breaker")
+    def test_em_timeout_uses_bounded_call_then_falls_back(self, mock_cb):
+        """主接口超时后应由同一有界调用机制继续执行备用链路。"""
+        mock_cb.return_value = _DummyCircuitBreaker()
+        with patch(
+            "data_provider.akshare_fetcher._akshare_call_with_timeout",
+            side_effect=[TimeoutError("stock_hk_spot_em timeout"), _make_spot_df()],
+        ) as bounded_call, patch.dict(sys.modules, {"akshare": MagicMock()}):
+            quote = self.fetcher._get_hk_realtime_quote("HK00700")
+
+        self.assertIsNotNone(quote)
+        self.assertAlmostEqual(quote.price, 368.0)
+        self.assertEqual(bounded_call.call_count, 2)
+        self.assertEqual(
+            bounded_call.call_args_list[0].kwargs["timeout"],
+            akshare_fetcher_module._AKSHARE_REALTIME_CALL_TIMEOUT,
+        )
+        self.assertEqual(
+            bounded_call.call_args_list[1].kwargs["call_name"],
+            "stock_hk_spot",
+        )
 
     @patch("data_provider.akshare_fetcher.get_realtime_circuit_breaker")
     def test_em_returns_empty_df_falls_back_to_spot(self, mock_cb):

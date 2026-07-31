@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 SINA_REALTIME_ENDPOINT = "hq.sinajs.cn/list"
 TENCENT_REALTIME_ENDPOINT = "qt.gtimg.cn/q"
 _AKSHARE_HISTORY_CALL_TIMEOUT = 30.0
+_AKSHARE_REALTIME_CALL_TIMEOUT = 30.0
 _AKSHARE_TIMEOUT_PROCESS_JOIN_GRACE = 1.0
 _AKSHARE_TIMEOUT_PROCESS_START_METHOD = "spawn"
 
@@ -1584,7 +1585,11 @@ class AkshareFetcher(BaseFetcher):
                         import time as _time
                         api_start = _time.time()
 
-                        df = ak.stock_hk_spot_em()
+                        df = _akshare_call_with_timeout(
+                            ak.stock_hk_spot_em,
+                            timeout=_AKSHARE_REALTIME_CALL_TIMEOUT,
+                            call_name="stock_hk_spot_em",
+                        )
 
                         api_elapsed = _time.time() - api_start
                         logger.info(
@@ -1639,7 +1644,11 @@ class AkshareFetcher(BaseFetcher):
             import time as _time
             api_start = _time.time()
 
-            df_spot = ak.stock_hk_spot()
+            df_spot = _akshare_call_with_timeout(
+                ak.stock_hk_spot,
+                timeout=_AKSHARE_REALTIME_CALL_TIMEOUT,
+                call_name="stock_hk_spot",
+            )
 
             api_elapsed = _time.time() - api_start
             logger.info(f"[API返回] ak.stock_hk_spot 成功: 返回 {len(df_spot)} 只港股, 耗时 {api_elapsed:.2f}s")
