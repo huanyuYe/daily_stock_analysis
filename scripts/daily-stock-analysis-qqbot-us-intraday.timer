@@ -1,0 +1,10 @@
+[Unit]
+Description=US intraday portfolio analysis and QQ push
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 12:30:00 America/New_York
+AccuracySec=1min
+Unit=daily-stock-analysis-qqbot-market@us-intraday.service
+
+[Install]
+WantedBy=timers.target

@@ -426,6 +426,7 @@ Current boundary: event type and impact are deterministic keyword classification
 | `SCHEDULE_RUN_IMMEDIATELY` | Run once immediately when scheduler mode starts; when unset it keeps following the legacy `RUN_IMMEDIATELY` runtime override | `true` |
 | `RUN_IMMEDIATELY` | Run once immediately for non-scheduler startup; also acts as the legacy fallback when `SCHEDULE_RUN_IMMEDIATELY` is unset | `true` |
 | `LOG_DIR` | Log directory | `./logs` |
+| `REPORTS_DIR` | Report directory. Defaults to `./reports`; phase-specific HK/US jobs override it per market and phase so same-day reports cannot overwrite one another | `./reports` |
 | `SAVE_CONTEXT_SNAPSHOT` | Persist analysis-history `context_snapshot`. When false, new history records do not save enhanced_context, market_phase_summary, AnalysisContextPack overview, or diagnostic snapshots, but current-run prompt summaries remain enabled | `true` |
 
 > Behavior notes:
@@ -1186,6 +1187,7 @@ System defaults to AkShare (free), also supports other data sources:
 - Optional knobs: `LONGBRIDGE_STATIC_INFO_TTL_SECONDS` (default `86400`) and `LONGBRIDGE_CONNECTION_COOLDOWN_SECONDS` (default `15`)
 - If credentials are absent, the optional Longbridge fetcher is not instantiated
 - When runtime errors such as `client is closed`, `context closed`, or `connection closed` occur, Longbridge enters a short cooldown window and US/HK daily or realtime requests automatically fall back to YFinance / AkShare instead of reconnecting on every request
+- US realtime quotes select Longbridge premarket, postmarket, or overnight payloads according to the actual market phase. Provider timestamps, `trade_session`, and trade status are preserved in the analysis context. If an entitled extended-hours payload is unavailable, the regular quote remains explicitly timestamped so stale metadata exposes the limitation instead of presenting it as an extended-hours realtime price.
 
 ---
 

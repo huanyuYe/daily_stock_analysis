@@ -131,6 +131,7 @@ class RuntimeSchedulerServiceTestCase(unittest.TestCase):
                 "force_run": True,
                 "single_notify": True,
                 "no_context_snapshot": True,
+                "analysis_phase": "postmarket",
                 "workers": 3,
                 "serve": True,
             },
@@ -146,6 +147,7 @@ class RuntimeSchedulerServiceTestCase(unittest.TestCase):
         self.assertTrue(seen_args[0].force_run)
         self.assertTrue(seen_args[0].single_notify)
         self.assertTrue(seen_args[0].no_context_snapshot)
+        self.assertEqual(seen_args[0].analysis_phase, "postmarket")
         self.assertEqual(seen_args[0].workers, 3)
         self.assertFalse(seen_args[0].serve)
         self.assertTrue(seen_args[0].serve_only)

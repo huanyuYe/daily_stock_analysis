@@ -24,14 +24,16 @@ DEFAULT_ANALYSIS_SERVICE = "daily-stock-analysis.service"
 MAX_QQ_PASSIVE_REPLIES = 5
 QQ_MESSAGE_CHARS = 4000
 
+_STOCK_CODE_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,19}"
+
 _SUMMARY_RE = re.compile(
-    r"^\s*\S*\s*\*\*(?P<name>.+?)\((?P<code>\d{6})\)\*\*:\s*"
+    rf"^\s*\S*\s*\*\*(?P<name>.+?)\((?P<code>{_STOCK_CODE_PATTERN})\)\*\*:\s*"
     r"(?P<action>[^|]+)\|\s*(?:评分|信心)\s*(?P<score>[^|]+)\|\s*"
     r"(?P<trend>.+?)\s*$",
     re.MULTILINE,
 )
 _DETAIL_HEADING_RE = re.compile(
-    r"^##\s+\S*\s*(?P<name>.+?)\s+\((?P<code>\d{6})\)\s*$",
+    rf"^##\s+\S*\s*(?P<name>.+?)\s+\((?P<code>{_STOCK_CODE_PATTERN})\)\s*$",
     re.MULTILINE,
 )
 
@@ -464,7 +466,7 @@ def build_qq_summary(report_path: Path, *, max_chars: int) -> str:
     market_status = (
         _clean_markdown(status_match.group(1))
         if status_match
-        else "A股 · 状态未提供"
+        else "市场状态未提供"
     )
     hard_limit = min(
         max_chars,

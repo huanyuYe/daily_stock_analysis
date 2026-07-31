@@ -32,6 +32,10 @@ class UnifiedRealtimeQuoteMetadataTestCase(unittest.TestCase):
             is_stale=False,
             stale_seconds=5,
             fallback_from="efinance",
+            trade_session="premarket",
+            trade_status="normal",
+            is_delayed=False,
+            entitlement_level="lv1",
         )
 
         data = quote.to_dict()
@@ -41,6 +45,10 @@ class UnifiedRealtimeQuoteMetadataTestCase(unittest.TestCase):
         self.assertIs(data["is_stale"], False)
         self.assertEqual(data["stale_seconds"], 5)
         self.assertEqual(data["fallback_from"], "efinance")
+        self.assertEqual(data["trade_session"], "premarket")
+        self.assertEqual(data["trade_status"], "normal")
+        self.assertIs(data["is_delayed"], False)
+        self.assertEqual(data["entitlement_level"], "lv1")
 
 
 class CircuitBreakerConcurrencyTestCase(unittest.TestCase):

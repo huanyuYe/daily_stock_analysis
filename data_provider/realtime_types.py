@@ -130,6 +130,10 @@ class UnifiedRealtimeQuote:
     currency: Optional[str] = None               # 报价币种（JPY/KRW/TWD/USD/HKD/CNY 等）
     data_quality: Optional[str] = None           # ok/partial/unavailable
     missing_fields: Optional[list[str]] = None   # provider 缺失的关键字段
+    trade_session: Optional[str] = None          # regular/premarket/postmarket/overnight
+    trade_status: Optional[str] = None           # Provider 原始交易状态的稳定文本
+    is_delayed: Optional[bool] = None             # Provider 明确标记延迟时使用
+    entitlement_level: Optional[str] = None       # Provider 可验证的行情权限等级
     
     # === 核心价格数据（几乎所有源都有）===
     price: Optional[float] = None           # 最新价
@@ -171,6 +175,7 @@ class UnifiedRealtimeQuote:
         optional_fields = [
             'fetched_at', 'provider_timestamp', 'is_stale', 'stale_seconds',
             'fallback_from', 'market', 'currency', 'data_quality', 'missing_fields',
+            'trade_session', 'trade_status', 'is_delayed', 'entitlement_level',
             'price', 'change_pct', 'change_amount', 'volume', 'amount',
             'volume_ratio', 'turnover_rate', 'amplitude',
             'open_price', 'high', 'low', 'pre_close',

@@ -506,6 +506,7 @@ A 股个股分析会通过现有 AkShare 依赖 best-effort 拉取两类近期�
 | `SCHEDULE_TIME` | 定时执行时间 | `18:00` |
 | `SCHEDULE_TIMES` | 多个定时执行时间，逗号分隔；为空时使用 `SCHEDULE_TIME` | 空 |
 | `LOG_DIR` | 日志目录 | `./logs` |
+| `REPORTS_DIR` | 报告目录；默认 `./reports`，港美股独立定时任务会按市场和阶段覆盖该值以避免同日报告互相覆盖 | `./reports` |
 | `SAVE_CONTEXT_SNAPSHOT` | 保存分析历史 `context_snapshot`；设为 `false` 时新历史不保存 enhanced_context、market_phase_summary、AnalysisContextPack overview 或诊断快照，但不关闭当次 Prompt 低敏摘要 | `true` |
 
 ---
@@ -1330,6 +1331,7 @@ PUSHOVER_API_TOKEN=your_api_token
 - 其余可选参数见官方 [环境变量说明](https://open.longbridge.com/zh-CN/docs/getting-started#环境变量)
 - 仅在 YFinance（美股）或 AkShare（港股）返回数据不完整时自动触发，不影响 A 股链路
 - 未配置凭据时不会实例化该可选数据源；若运行时出现连接关闭类异常，会在冷却期内临时跳过 Longbridge，避免请求级频繁重连
+- 美股实时行情按实际市场阶段优先读取盘前、盘后或夜盘报价对象，并把 provider 时间戳、`trade_session` 和交易状态写入分析上下文；若对应扩展时段报价或权限不可用，则保留常规报价及其时间戳，由 stale 元数据暴露时效性，不把旧常规报价伪装为扩展时段实时价
 
 ### 东财接口频繁失败时的处理
 

@@ -309,6 +309,12 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
             is_stale=False,
             stale_seconds=5,
             fallback_from="efinance",
+            market="us",
+            currency="USD",
+            trade_session="premarket",
+            trade_status="normal",
+            is_delayed=False,
+            entitlement_level="lv1",
         )
         trend = TrendAnalysisResult(
             code="600519",
@@ -333,6 +339,12 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         self.assertIs(enhanced["realtime"]["is_stale"], False)
         self.assertEqual(enhanced["realtime"]["stale_seconds"], 5)
         self.assertEqual(enhanced["realtime"]["fallback_from"], "efinance")
+        self.assertEqual(enhanced["realtime"]["market"], "us")
+        self.assertEqual(enhanced["realtime"]["currency"], "USD")
+        self.assertEqual(enhanced["realtime"]["trade_session"], "premarket")
+        self.assertEqual(enhanced["realtime"]["trade_status"], "normal")
+        self.assertIs(enhanced["realtime"]["is_delayed"], False)
+        self.assertEqual(enhanced["realtime"]["entitlement_level"], "lv1")
         self.assertTrue(enhanced["today"]["is_partial_bar"])
         self.assertTrue(enhanced["today"]["is_estimated"])
         self.assertEqual(
@@ -342,6 +354,10 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         self.assertEqual(enhanced["today"]["fetched_at"], "2026-05-31T10:00:05+00:00")
         self.assertEqual(enhanced["today"]["provider_timestamp"], "2026-05-31T10:00:00+00:00")
         self.assertEqual(enhanced["today"]["fallback_from"], "efinance")
+        self.assertEqual(enhanced["today"]["trade_session"], "premarket")
+        self.assertEqual(enhanced["today"]["trade_status"], "normal")
+        self.assertIs(enhanced["today"]["is_delayed"], False)
+        self.assertEqual(enhanced["today"]["entitlement_level"], "lv1")
         self.assertNotIn("amount", enhanced["today"])
         self.assertNotIn("dataSource", enhanced["today"])
 

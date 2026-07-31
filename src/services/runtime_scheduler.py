@@ -28,6 +28,7 @@ SCHEDULE_ARGS_OVERRIDE_KEYS = {
     "force_run",
     "single_notify",
     "no_context_snapshot",
+    "analysis_phase",
     "workers",
     "portfolio",
 }
@@ -152,6 +153,7 @@ class RuntimeSchedulerService:
             "force_run": False,
             "single_notify": False,
             "no_context_snapshot": False,
+            "analysis_phase": "auto",
             "market_review": False,
             "serve": False,
             "serve_only": True,

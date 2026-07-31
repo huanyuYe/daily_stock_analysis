@@ -1,0 +1,10 @@
+[Unit]
+Description=US postmarket portfolio analysis and QQ push
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 16:15:00 America/New_York
+AccuracySec=1min
+Unit=daily-stock-analysis-qqbot-market@us-postmarket.service
+
+[Install]
+WantedBy=timers.target

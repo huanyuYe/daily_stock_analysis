@@ -23,7 +23,7 @@ class QQBotPassiveReportTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.reports_dir = Path(self.tempdir.name)
-        self.now = datetime(2026, 7, 23, 13, 30)
+        self.now = datetime.now().replace(second=0, microsecond=0)
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()

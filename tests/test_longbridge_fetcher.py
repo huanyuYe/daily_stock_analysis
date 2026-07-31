@@ -18,6 +18,7 @@ import tempfile
 import time
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock, PropertyMock
@@ -32,6 +33,7 @@ from data_provider.longbridge_fetcher import (
     _is_hk_code,
 )
 from data_provider.realtime_types import UnifiedRealtimeQuote, RealtimeSource
+from src.core.trading_calendar import MarketPhase
 
 
 class TestSymbolConversion(unittest.TestCase):
@@ -480,6 +482,11 @@ class TestLongbridgeFetcherMocked(unittest.TestCase):
             "low": "247.10",
             "volume": 49549600,
             "turnover": "12575000000",
+            "timestamp": None,
+            "trade_status": None,
+            "pre_market_quote": None,
+            "post_market_quote": None,
+            "overnight_quote": None,
         }
         defaults.update(kwargs)
         for k, v in defaults.items():
@@ -529,6 +536,70 @@ class TestLongbridgeFetcherMocked(unittest.TestCase):
 
         # total_mv
         self.assertAlmostEqual(quote.total_mv, 253.79 * 16000000000, places=0)
+        self.assertEqual(quote.market, "us")
+        self.assertEqual(quote.currency, "USD")
+        self.assertEqual(quote.trade_session, "regular")
+
+    def test_realtime_quote_uses_us_premarket_payload_and_timestamp(self):
+        fetcher, ctx = self._make_fetcher_with_mock_ctx()
+        provider_time = datetime(2026, 7, 30, 12, 59, tzinfo=timezone.utc)
+        premarket = SimpleNamespace(
+            last_done="250.50",
+            open="249.00",
+            high="251.00",
+            low="248.50",
+            volume=12345,
+            turnover="3099922.5",
+            timestamp=provider_time,
+        )
+        regular = self._make_mock_quote(pre_market_quote=premarket)
+        ctx.quote.return_value = [regular]
+        ctx.static_info.return_value = [self._make_mock_static()]
+        ctx.history_candlesticks_by_offset.return_value = []
+
+        with patch(
+            "data_provider.longbridge_fetcher.infer_market_phase",
+            return_value=MarketPhase.PREMARKET,
+        ):
+            quote = fetcher.get_realtime_quote("AAPL")
+
+        self.assertIsNotNone(quote)
+        self.assertEqual(quote.price, 250.5)
+        self.assertEqual(quote.trade_session, "premarket")
+        self.assertEqual(
+            quote.provider_timestamp,
+            "2026-07-30T12:59:00+00:00",
+        )
+        self.assertEqual(quote.volume, 12345)
+
+    def test_realtime_quote_uses_us_postmarket_payload(self):
+        fetcher, ctx = self._make_fetcher_with_mock_ctx()
+        postmarket = SimpleNamespace(
+            last_done="255.25",
+            open="254.00",
+            high="256.00",
+            low="253.50",
+            volume=9876,
+            turnover="2525859",
+            timestamp=datetime(2026, 7, 30, 20, 15, tzinfo=timezone.utc),
+        )
+        regular = self._make_mock_quote(post_market_quote=postmarket)
+        ctx.quote.return_value = [regular]
+        ctx.static_info.return_value = [self._make_mock_static()]
+        ctx.history_candlesticks_by_offset.return_value = []
+
+        with patch(
+            "data_provider.longbridge_fetcher.infer_market_phase",
+            return_value=MarketPhase.POSTMARKET,
+        ), patch(
+            "data_provider.longbridge_fetcher.get_market_now",
+            return_value=datetime(2026, 7, 30, 16, 15, tzinfo=timezone.utc),
+        ):
+            quote = fetcher.get_realtime_quote("AAPL")
+
+        self.assertIsNotNone(quote)
+        self.assertEqual(quote.price, 255.25)
+        self.assertEqual(quote.trade_session, "postmarket")
 
     def test_turnover_falls_back_to_total_shares_when_circulating_zero(self):
         """US API often reports circulating_shares=0; use total_shares for turnover."""

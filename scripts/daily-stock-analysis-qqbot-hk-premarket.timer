@@ -1,0 +1,10 @@
+[Unit]
+Description=Hong Kong premarket portfolio analysis and QQ push
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:00:00 Asia/Hong_Kong
+AccuracySec=1min
+Unit=daily-stock-analysis-qqbot-market@hk-premarket.service
+
+[Install]
+WantedBy=timers.target

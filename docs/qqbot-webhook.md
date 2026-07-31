@@ -219,3 +219,45 @@ All three timers activate the same
 `daily-stock-analysis-qqbot-active.service`; `flock` prevents overlapping
 analysis runs. Disable the legacy loopback Webhook when this path is enabled to
 avoid duplicate delivery.
+
+HK and US portfolio schedules use
+`scripts/run_market_and_push_qq.py --profile <market>-<phase>`. The script reads
+Futu holdings through the existing query-only portfolio adapter, filters them
+to the requested market, and never calls Futu quote subscription or trading
+APIs. The normal data-provider fallback chain supplies market data, while
+reports are isolated below `reports/<market>/<phase>/` before the same
+fresh-report check and official QQ delivery.
+
+The bundled `daily-stock-analysis-qqbot-market@.service` shares the A-share
+`flock`, so constrained hosts run only one market analysis at a time. Its six
+timers are:
+
+- HK: 09:00, 12:05, and 16:15 in `Asia/Hong_Kong`;
+- US: 09:00, 12:30, and 16:15 in `America/New_York`.
+
+Using the exchange-local IANA timezone lets systemd handle US daylight-saving
+changes. Before reading Futu holdings, `exchange_calendars` checks the target
+market date; holidays and unknown calendar state fail closed without analysis
+or delivery. The timer weekday restriction alone is not treated as a trading
+calendar.
+
+Install the service template and only the timers you want to enable:
+
+```bash
+sudo install -m 0644 scripts/daily-stock-analysis-qqbot-market@.service /etc/systemd/system/
+sudo install -m 0644 scripts/daily-stock-analysis-qqbot-hk-*.timer /etc/systemd/system/
+sudo install -m 0644 scripts/daily-stock-analysis-qqbot-us-*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now \
+  daily-stock-analysis-qqbot-hk-premarket.timer \
+  daily-stock-analysis-qqbot-hk-intraday.timer \
+  daily-stock-analysis-qqbot-hk-postmarket.timer \
+  daily-stock-analysis-qqbot-us-premarket.timer \
+  daily-stock-analysis-qqbot-us-intraday.timer \
+  daily-stock-analysis-qqbot-us-postmarket.timer
+```
+
+Before enabling them, verify that Futu OpenD is reachable in query-only mode
+and that at least one HK or US holding exists. Longbridge credentials and quote
+entitlement are independent from Futu and optional; without them, the normal
+AkShare/YFinance fallbacks remain visible as fallback sources.

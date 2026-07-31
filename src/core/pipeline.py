@@ -973,6 +973,14 @@ class StockAnalysisPipeline:
                 'is_stale': getattr(realtime_quote, 'is_stale', None),
                 'stale_seconds': getattr(realtime_quote, 'stale_seconds', None),
                 'fallback_from': getattr(realtime_quote, 'fallback_from', None),
+                'market': getattr(realtime_quote, 'market', None),
+                'currency': getattr(realtime_quote, 'currency', None),
+                'data_quality': getattr(realtime_quote, 'data_quality', None),
+                'missing_fields': getattr(realtime_quote, 'missing_fields', None),
+                'trade_session': getattr(realtime_quote, 'trade_session', None),
+                'trade_status': getattr(realtime_quote, 'trade_status', None),
+                'is_delayed': getattr(realtime_quote, 'is_delayed', None),
+                'entitlement_level': getattr(realtime_quote, 'entitlement_level', None),
             }
             # 移除 None 值以减少上下文大小
             enhanced['realtime'] = {k: v for k, v in enhanced['realtime'].items() if v is not None}
@@ -1030,6 +1038,10 @@ class StockAnalysisPipeline:
                 fetched_at = getattr(realtime_quote, 'fetched_at', None)
                 provider_timestamp = getattr(realtime_quote, 'provider_timestamp', None)
                 fallback_from = getattr(realtime_quote, 'fallback_from', None)
+                trade_session = getattr(realtime_quote, 'trade_session', None)
+                trade_status = getattr(realtime_quote, 'trade_status', None)
+                is_delayed = getattr(realtime_quote, 'is_delayed', None)
+                entitlement_level = getattr(realtime_quote, 'entitlement_level', None)
                 realtime_today = {
                     'close': price,
                     'open': open_p,
@@ -1064,6 +1076,14 @@ class StockAnalysisPipeline:
                     realtime_today['provider_timestamp'] = provider_timestamp
                 if fallback_from is not None:
                     realtime_today['fallback_from'] = fallback_from
+                if trade_session is not None:
+                    realtime_today['trade_session'] = trade_session
+                if trade_status is not None:
+                    realtime_today['trade_status'] = trade_status
+                if is_delayed is not None:
+                    realtime_today['is_delayed'] = is_delayed
+                if entitlement_level is not None:
+                    realtime_today['entitlement_level'] = entitlement_level
                 realtime_owned_fields = {
                     'open', 'high', 'low', 'close',
                     'volume', 'amount', 'pct_chg', 'pctChg',
@@ -1073,6 +1093,8 @@ class StockAnalysisPipeline:
                     'isEstimated', 'estimated_fields', 'estimatedFields',
                     'fetched_at', 'fetchedAt', 'provider_timestamp',
                     'providerTimestamp', 'fallback_from', 'fallbackFrom',
+                    'trade_session', 'tradeSession', 'trade_status', 'tradeStatus',
+                    'is_delayed', 'isDelayed', 'entitlement_level', 'entitlementLevel',
                 }
                 for k, v in orig_today.items():
                     if k not in realtime_today and k not in realtime_owned_fields and v is not None:

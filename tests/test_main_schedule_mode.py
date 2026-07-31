@@ -90,6 +90,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
             "debug": False,
             "stocks": None,
             "portfolio": None,
+            "analysis_phase": "auto",
             "webui": False,
             "webui_only": False,
             "serve": False,
@@ -793,6 +794,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
             "force_run": True,
             "single_notify": True,
             "no_context_snapshot": True,
+            "analysis_phase": "auto",
             "workers": 4,
         }])
         start_bots.assert_called_once_with(config)
@@ -916,6 +918,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
             "force_run": True,
             "single_notify": True,
             "no_context_snapshot": True,
+            "analysis_phase": "auto",
             "workers": 4,
         }])
         self.assertFalse(config.schedule_enabled)
@@ -1204,8 +1207,35 @@ class MainScheduleModeTestCase(unittest.TestCase):
             refresh.assert_called_once_with(config)
         self.assertEqual(events[:2], ["refresh", "pipeline"])
         self.assertTrue(pipeline_kwargs["daily_market_context_allow_generate"])
+        self.assertEqual(pipeline_kwargs["analysis_phase"], "auto")
         pipeline.run.assert_called_once()
         run_market_review.assert_not_called()
+
+    def test_run_full_analysis_passes_explicit_analysis_phase_to_pipeline(self) -> None:
+        args = self._make_args(analysis_phase="premarket", no_market_review=True)
+        config = self._make_config(
+            trading_day_check_enabled=False,
+            market_review_enabled=False,
+            single_stock_notify=False,
+            merge_email_notification=False,
+            analysis_delay=0,
+            database_path=str(Path(self.temp_dir.name) / "stock_analysis.db"),
+        )
+        pipeline = MagicMock()
+        pipeline.run.return_value = []
+        pipeline_kwargs = {}
+
+        def build_pipeline(*args, **kwargs):
+            pipeline_kwargs.update(kwargs)
+            return pipeline
+
+        with patch.object(main, "_refresh_stock_index_cache_for_analysis"), \
+             patch("main._compute_trading_day_filter", return_value=(["AAPL"], None, False)), \
+             patch("src.core.pipeline.StockAnalysisPipeline", side_effect=build_pipeline), \
+             patch("src.core.market_review.run_market_review"):
+            main.run_full_analysis(config, args, ["AAPL"])
+
+        self.assertEqual(pipeline_kwargs["analysis_phase"], "premarket")
 
     def test_run_full_analysis_disables_generation_when_no_market_review_flag_set(self) -> None:
         args = self._make_args(no_market_review=True)

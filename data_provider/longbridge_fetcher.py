@@ -27,7 +27,7 @@ import logging
 import os
 import time
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -36,11 +36,86 @@ import pandas as pd
 from .base import BaseFetcher, STANDARD_COLUMNS
 from .realtime_types import UnifiedRealtimeQuote, RealtimeSource, safe_float
 from .us_index_mapping import is_us_stock_code, is_us_index_code
+from src.core.trading_calendar import MarketPhase, get_market_now, infer_market_phase
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_STATIC_INFO_TTL = 86400  # 24h
 _DEFAULT_CONNECTION_COOLDOWN_SECONDS = 15
+
+
+def _provider_timestamp_iso(value: Any) -> Optional[str]:
+    """Normalize an SDK timestamp without inventing a timezone."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return None
+        return value.astimezone(timezone.utc).isoformat()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        numeric = float(value)
+        if numeric > 10_000_000_000:
+            numeric /= 1000
+        try:
+            return datetime.fromtimestamp(numeric, tz=timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None
+    text = str(value).strip()
+    if not text or text.startswith("<"):
+        return None
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _enum_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    name = getattr(value, "name", None)
+    if isinstance(name, str):
+        value = name
+    else:
+        candidate = getattr(value, "value", None)
+        if isinstance(candidate, (str, int)):
+            value = candidate
+    text = str(value).strip()
+    if not text or text.startswith("<"):
+        return None
+    return text.lower()
+
+
+def _quote_has_price(value: Any) -> bool:
+    price = safe_float(getattr(value, "last_done", None))
+    return price is not None and price > 0
+
+
+def _select_quote_payload(q: Any, symbol: str) -> tuple[Any, str]:
+    """Select a US extended-session payload when the current phase requires it."""
+    if not symbol.endswith(".US"):
+        return q, "regular"
+
+    phase = infer_market_phase("us")
+    if phase == MarketPhase.PREMARKET:
+        candidate = getattr(q, "pre_market_quote", None)
+        if candidate is not None and _quote_has_price(candidate):
+            return candidate, "premarket"
+    elif phase == MarketPhase.POSTMARKET:
+        market_now = get_market_now("us")
+        extended_candidates = (
+            (("overnight_quote", "overnight"), ("post_market_quote", "postmarket"))
+            if market_now.hour >= 20 or market_now.hour < 4
+            else (("post_market_quote", "postmarket"), ("overnight_quote", "overnight"))
+        )
+        for attribute, session in extended_candidates:
+            candidate = getattr(q, attribute, None)
+            if candidate is not None and _quote_has_price(candidate):
+                return candidate, session
+    return q, "regular"
 
 
 def _static_info_ttl_seconds() -> int:
@@ -760,16 +835,21 @@ class LongbridgeFetcher(BaseFetcher):
                 self._mark_connection_cooldown(e)
             return None
 
-        price = safe_float(getattr(q, "last_done", None))
+        payload, trade_session = _select_quote_payload(q, symbol)
+        price = safe_float(getattr(payload, "last_done", None))
         if price is None or price <= 0:
             return None
 
         prev_close = safe_float(getattr(q, "prev_close", None))
-        open_price = safe_float(getattr(q, "open", None))
-        high = safe_float(getattr(q, "high", None))
-        low = safe_float(getattr(q, "low", None))
-        volume = int(getattr(q, "volume", 0) or 0)
-        turnover = safe_float(getattr(q, "turnover", None))
+        open_price = safe_float(getattr(payload, "open", None))
+        high = safe_float(getattr(payload, "high", None))
+        low = safe_float(getattr(payload, "low", None))
+        volume = int(getattr(payload, "volume", 0) or 0)
+        turnover = safe_float(getattr(payload, "turnover", None))
+        provider_timestamp = _provider_timestamp_iso(
+            getattr(payload, "timestamp", None)
+        )
+        trade_status = _enum_text(getattr(q, "trade_status", None))
 
         change_amount = None
         change_pct = None
@@ -832,6 +912,11 @@ class LongbridgeFetcher(BaseFetcher):
             code=stock_code,
             name=name,
             source=RealtimeSource.LONGBRIDGE,
+            provider_timestamp=provider_timestamp,
+            market="us" if symbol.endswith(".US") else "hk",
+            currency="USD" if symbol.endswith(".US") else "HKD",
+            trade_session=trade_session,
+            trade_status=trade_status,
             price=price,
             change_pct=change_pct,
             change_amount=change_amount,
@@ -852,7 +937,8 @@ class LongbridgeFetcher(BaseFetcher):
 
         logger.info(
             f"[Longbridge] {symbol} 行情获取成功: "
-            f"价格={price}, 量比={volume_ratio}, 换手率={turnover_rate}"
+            f"价格={price}, session={trade_session}, "
+            f"量比={volume_ratio}, 换手率={turnover_rate}"
         )
         return quote
 

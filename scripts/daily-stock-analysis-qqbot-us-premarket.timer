@@ -1,0 +1,10 @@
+[Unit]
+Description=US premarket portfolio analysis and QQ push
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:00:00 America/New_York
+AccuracySec=1min
+Unit=daily-stock-analysis-qqbot-market@us-premarket.service
+
+[Install]
+WantedBy=timers.target

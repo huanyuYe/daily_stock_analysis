@@ -1,0 +1,10 @@
+[Unit]
+Description=Hong Kong intraday portfolio analysis and QQ push
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 12:05:00 Asia/Hong_Kong
+AccuracySec=1min
+Unit=daily-stock-analysis-qqbot-market@hk-intraday.service
+
+[Install]
+WantedBy=timers.target

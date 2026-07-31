@@ -17,6 +17,7 @@ A股自选股智能分析系统 - 通知层
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -2847,8 +2848,16 @@ class NotificationService(
             date_str = datetime.now().strftime('%Y%m%d')
             filename = f"report_{date_str}.md"
 
-        # 确保 reports 目录存在（使用项目根目录下的 reports）
-        reports_dir = Path(__file__).parent.parent / 'reports'
+        # 默认写入项目 reports；独立市场任务可以通过 REPORTS_DIR 隔离
+        # 港股/美股及不同阶段，避免同日 report_YYYYMMDD.md 相互覆盖。
+        configured_reports_dir = (os.getenv("REPORTS_DIR") or "").strip()
+        reports_dir = (
+            Path(configured_reports_dir).expanduser()
+            if configured_reports_dir
+            else Path(__file__).parent.parent / 'reports'
+        )
+        if not reports_dir.is_absolute():
+            reports_dir = Path(__file__).parent.parent / reports_dir
         reports_dir.mkdir(parents=True, exist_ok=True)
 
         filepath = reports_dir / filename

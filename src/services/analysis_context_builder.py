@@ -724,6 +724,10 @@ def _quote_metadata(
         "fetched_at",
         "provider_timestamp",
         "fallback_from",
+        "trade_session",
+        "trade_status",
+        "is_delayed",
+        "entitlement_level",
     ):
         if key in {"fetched_at", "provider_timestamp"}:
             value = _metadata_iso_datetime_value(artifacts.metadata or {}, key)

@@ -314,6 +314,14 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        '--analysis-phase',
+        type=str.lower,
+        choices=('auto', 'premarket', 'intraday', 'postmarket'),
+        default='auto',
+        help='指定分析阶段；默认 auto 按目标市场交易日历自动判断'
+    )
+
+    parser.add_argument(
         '--no-notify',
         action='store_true',
         help='不发送推送通知'
@@ -831,6 +839,7 @@ def run_full_analysis(
             max_workers=args.workers,
             query_id=query_id,
             query_source="cli",
+            analysis_phase=getattr(args, "analysis_phase", "auto") or "auto",
             save_context_snapshot=save_context_snapshot,
             daily_market_context_enabled=should_use_daily_market_context,
             daily_market_context_allow_generate=should_use_daily_market_context,
@@ -1435,6 +1444,7 @@ def main() -> int:
             "force_run": bool(getattr(args, "force_run", False)),
             "single_notify": bool(getattr(args, "single_notify", False)),
             "no_context_snapshot": bool(getattr(args, "no_context_snapshot", False)),
+            "analysis_phase": getattr(args, "analysis_phase", "auto") or "auto",
             "workers": getattr(args, "workers", None),
         }
         if getattr(args, "portfolio", None):
