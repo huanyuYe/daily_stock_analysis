@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - [新功能] 接入 SEC submissions、SEC companyfacts 与公共 HKEXnews 结构化发行人披露，保留官方来源、申报时间和验证状态并以 fail-open 方式进入分析上下文
 - [新功能] 增加 15 个默认禁用的精选 RSS 试点模板，并让个股资讯池可补充去重后的 global 行业证据
+- [改进] 本地资讯自动刷新支持关闭基础源自动补齐，以便将生产 RSS 试点严格限制为显式启用的 12–15 个源
 - [改进] 默认跨市场自选配置示例加入腾讯港股 `hk00700`
 - [新功能] 新增只读读取 Futu 持仓的港股/美股盘前、盘中、盘后独立 QQ 定时分析；使用交易所本地 IANA 时区、共享互斥锁和按市场阶段隔离的报告目录，不接入 UK 市场，也不调用 Futu 行情订阅或交易接口。
 - [新功能] A 股多维情报与 IntelAgent 新增按精确代码读取的东方财富券商研报元数据，只保留机构、日期、评级、EPS 预测和原始链接，并以 `sell_side_aggregator` / `single_source_opinion` 明确隔离卖方观点与公司事实；接口失败时继续使用原搜索 provider。

@@ -62,7 +62,7 @@ SEC 官方说明其 submissions 与 XBRL JSON API 无需 API Key，申报历史�
 
 两市场的记录均标记 `source_tier=official_regulator` 和 `verification_status=official_primary`，同时保留 `as_of`、各来源状态和 warning。传统分析会把结构化证据追加到 `news_context`；Agent 分析会预取到 `regulatory_disclosures`，IntelAgent 也可按需调用 `get_regulatory_disclosures`。
 
-精选 RSS 第一批共 15 个模板，覆盖宏观（Federal Reserve、ECB）、AI/软件（OpenAI、Google Research、DeepMind、Hugging Face、GitHub）、半导体/新能源（Semiconductor Engineering、CnEVPost、pv magazine、Energy-Storage.news）及医药/安全/航天（STAT、Fierce Biotech、Microsoft Security Blog、SpaceNews）。模板默认 `pilot=true`、`auto_enable=false`，不会随自动刷新隐式开启。启用后同市场证据不足时可补充 `global` 行业证据，仍限制为最多 6 条上下文。
+精选 RSS 第一批共 15 个模板，覆盖宏观（Federal Reserve、ECB）、AI/软件（OpenAI、Google Research、DeepMind、Hugging Face、GitHub）、半导体/新能源（Semiconductor Engineering、CnEVPost、pv magazine、Energy-Storage.news）及医药/安全/航天（STAT、Fierce Biotech、Microsoft Security Blog、SpaceNews）。模板默认 `pilot=true`、`auto_enable=false`，不会随自动刷新隐式开启；生产试点设置 `NEWS_INTEL_AUTO_BOOTSTRAP_DEFAULTS=false` 后，只拉取显式启用的这 15 个源，不会额外补齐 8 个基础源。启用后同市场证据不足时可补充 `global` 行业证据，仍限制为最多 6 条上下文。
 
 RSS 接入没有新增数据库迁移或新进程，代码与部署成本低；主要运行成本来自串行 HTTP 请求。按当前 8 秒上限，全部 15 源最坏会显著拉长单次自动刷新，因此生产建议首周只显式启用 4–6 个与关注标的行业直接相关的源，利用现有 60 分钟冷却观察成功率、重复率和延迟后再扩大。信息增益主要是更早捕捉产业政策、技术发布、供应链和临床/安全事件，不提升发行人财务事实的真实性等级。
 

@@ -355,7 +355,18 @@ class IntelligenceService:
 
         result: Dict[str, Any]
         try:
-            bootstrap = self.ensure_default_sources_enabled()
+            if getattr(self.config, "news_intel_auto_bootstrap_defaults", True):
+                bootstrap = self.ensure_default_sources_enabled()
+            else:
+                bootstrap = {
+                    "created_count": 0,
+                    "enabled_count": 0,
+                    "error_count": 0,
+                    "errors": [],
+                    "total": 0,
+                    "skipped": True,
+                    "reason": "default_bootstrap_disabled",
+                }
             fetch = self.fetch_enabled_sources()
             result = {
                 "ok": True,

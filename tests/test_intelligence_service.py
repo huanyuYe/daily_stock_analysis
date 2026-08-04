@@ -416,6 +416,25 @@ class IntelligenceServiceTestCase(unittest.TestCase):
         self.assertEqual(self.service.list_sources(enabled=True)["total"], 8)
         self.assertEqual(created["total"] - 8, 15)
 
+    def test_refresh_auto_sources_can_skip_default_bootstrap_for_pilot(self) -> None:
+        self.service.config.news_intel_auto_fetch_enabled = True
+        self.service.config.news_intel_auto_bootstrap_defaults = False
+        self.service.create_source_from_template(
+            "rss-pilot-fed",
+            {"enabled": True},
+        )
+
+        with patch(
+            "src.services.intelligence_service.requests.get",
+            return_value=self._mock_response(),
+        ):
+            result = self.service.refresh_auto_sources(force=True)
+
+        self.assertTrue(result["bootstrap"]["skipped"])
+        self.assertEqual(result["bootstrap"]["total"], 0)
+        self.assertEqual(result["fetch"]["source_count"], 1)
+        self.assertEqual(self.service.list_sources(enabled=True)["total"], 1)
+
     def test_refresh_auto_sources_uses_cooldown_after_success(self) -> None:
         self.service.config.news_intel_auto_fetch_enabled = True
 

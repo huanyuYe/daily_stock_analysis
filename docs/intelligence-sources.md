@@ -38,12 +38,15 @@ NEWS_INTEL_RETENTION_DAYS=30
 NEWS_INTEL_FETCH_TIMEOUT_SEC=8
 NEWS_INTEL_MAX_ITEMS_PER_SOURCE=50
 NEWS_INTEL_AUTO_FETCH_ENABLED=false
+NEWS_INTEL_AUTO_BOOTSTRAP_DEFAULTS=true
 NEWSNOW_BASE_URL=https://newsnow.busiyi.world
 ```
 
 `NEWSNOW_BASE_URL` 用于拼出 `GET {NEWSNOW_BASE_URL}/api/s?id=<source_id>`。
 
 `NEWS_INTEL_AUTO_FETCH_ENABLED` 默认关闭。设为 `true` 后，个股分析、Agent 分析和大盘复盘在读取本地资讯池前会先执行一次 fail-open 自动刷新：缺少基础内置资讯源时自动创建并启用，已有但禁用的基础内置源会重新启用，然后拉取全部启用源并写入 `intelligence_items`。15 个精选 RSS 试点模板标记为 `pilot=true`、`auto_enable=false`，不会被该开关隐式创建或启用；需要先通过模板接口按需创建并显式启用。为避免每只股票重复请求外部站点，运行进程内有 60 分钟冷却；冷却内复用本地库数据。
+
+受控试点可同时设置 `NEWS_INTEL_AUTO_FETCH_ENABLED=true` 和 `NEWS_INTEL_AUTO_BOOTSTRAP_DEFAULTS=false`。此时自动刷新不会创建或重新启用 8 个基础内置源，只会拉取数据库中已经显式启用的源，可严格把首批运行源控制在 12–15 个。
 
 **外部依赖兼容性说明：**
 

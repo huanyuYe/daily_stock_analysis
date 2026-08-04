@@ -835,6 +835,7 @@ class Config:
     news_intel_fetch_timeout_sec: float = 8.0  # 单个资讯源拉取超时
     news_intel_max_items_per_source: int = 50  # 单次每个资讯源最多采集条数
     news_intel_auto_fetch_enabled: bool = False  # 是否在分析前自动初始化并拉取本地资讯源
+    news_intel_auto_bootstrap_defaults: bool = True  # 自动刷新时是否补齐基础内置源
     newsnow_base_url: str = "https://newsnow.busiyi.world"  # NewsNow HTTP API base URL (数据源侧，不影响 LLM/provider base URL)
     regulatory_disclosures_enabled: bool = True  # SEC/HKEXnews 官方披露元数据
     regulatory_fetch_timeout_sec: float = 8.0
@@ -1745,6 +1746,10 @@ class Config:
             news_intel_auto_fetch_enabled=parse_env_bool(
                 os.getenv('NEWS_INTEL_AUTO_FETCH_ENABLED'),
                 False,
+            ),
+            news_intel_auto_bootstrap_defaults=parse_env_bool(
+                os.getenv('NEWS_INTEL_AUTO_BOOTSTRAP_DEFAULTS'),
+                True,
             ),
             newsnow_base_url=((os.getenv('NEWSNOW_BASE_URL') or '').strip().rstrip('/') or 'https://newsnow.busiyi.world'),
             regulatory_disclosures_enabled=parse_env_bool(

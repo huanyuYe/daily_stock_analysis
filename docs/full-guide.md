@@ -385,7 +385,7 @@ A 股个股分析会通过现有 AkShare 依赖 best-effort 拉取两类近期�
 
 港股与美股另有结构化监管披露链路。美股的 SEC-A 读取 EDGAR `submissions/CIK##########.json` 申报元数据，SEC-B 读取 `companyfacts/CIK##########.json` 并按 `filed_at` 选择最新已申报的核心 XBRL 事实；港股通过公共 HKEXnews Title Search 获取发行人披露的发布日期、标题和原文链接。所有记录保留 `source_id`、`source_tier=official_regulator`、`verification_status=official_primary`、截至时间和来源状态；公共 HKEXnews 页面适配器不宣称为受支持的官方 API，也不抓取 PDF 正文。配置项为 `REGULATORY_DISCLOSURES_ENABLED`（默认 `true`）、`REGULATORY_FETCH_TIMEOUT_SEC`（默认 8 秒）和 `SEC_EDGAR_USER_AGENT`。任一来源失败均 fail-open，不阻断行情、技术面或报告生成。
 
-本地资讯池增加了 15 个精选 RSS 试点模板，覆盖宏观、AI、软件、半导体、新能源汽车、光伏、储能、医药、网络安全和商业航天。试点模板默认禁用，并且不会被 `NEWS_INTEL_AUTO_FETCH_ENABLED` 隐式启用；启用后，个股上下文会在标的级和同市场资讯之后补充 `global` 资讯，仍按 URL 去重并受窗口与条数上限约束。源清单、启用步骤和成本边界见 [资讯 / 情报源 MVP](intelligence-sources.md)。
+本地资讯池增加了 15 个精选 RSS 试点模板，覆盖宏观、AI、软件、半导体、新能源汽车、光伏、储能、医药、网络安全和商业航天。试点模板默认禁用，并且不会被 `NEWS_INTEL_AUTO_FETCH_ENABLED` 隐式启用；设置 `NEWS_INTEL_AUTO_BOOTSTRAP_DEFAULTS=false` 后，自动刷新只拉取显式启用源，不再额外补齐 8 个基础源。启用后，个股上下文会在标的级和同市场资讯之后补充 `global` 资讯，仍按 URL 去重并受窗口与条数上限约束。源清单、启用步骤和成本边界见 [资讯 / 情报源 MVP](intelligence-sources.md)。
 
 结构化事件会进入以下决策路径：
 
