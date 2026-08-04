@@ -8,7 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+
+- [新功能] 接入 SEC submissions、SEC companyfacts 与公共 HKEXnews 结构化发行人披露，保留官方来源、申报时间和验证状态并以 fail-open 方式进入分析上下文
+- [新功能] 增加 15 个默认禁用的精选 RSS 试点模板，并让个股资讯池可补充去重后的 global 行业证据
+- [改进] 默认跨市场自选配置示例加入腾讯港股 `hk00700`
 - [新功能] 新增只读读取 Futu 持仓的港股/美股盘前、盘中、盘后独立 QQ 定时分析；使用交易所本地 IANA 时区、共享互斥锁和按市场阶段隔离的报告目录，不接入 UK 市场，也不调用 Futu 行情订阅或交易接口。
+- [新功能] A 股多维情报与 IntelAgent 新增按精确代码读取的东方财富券商研报元数据，只保留机构、日期、评级、EPS 预测和原始链接，并以 `sell_side_aggregator` / `single_source_opinion` 明确隔离卖方观点与公司事实；接口失败时继续使用原搜索 provider。
+- [文档] 新增 Vibe-Research A/港/美股数据源代码级对比，区分产品实际运行链路与附带工具箱能力，并记录真实性、时效性、信息丰富度及 SEC/HKEX 后续扩展优先级。
 - [改进] Longbridge 美股实时行情按实际市场阶段选择盘前、盘后或夜盘报价，并将 provider 时间戳、交易时段和交易状态透传到策略上下文；QQ 紧凑报告同时支持港股和美股代码，AkShare 港股主备实时快照调用增加 30 秒进程级超时。
 - [测试] QQ 缓存报告保留期用例改用运行时当前时间，避免固定日期在跨过七天窗口后产生伪失败。
 - [修复] 统一等价股票代码的本地日线候选与同源窗口解析；冲突沪深交易所代码不再降级匹配裸码，回测仅接受快照或交易日历确认的起点，并在同一起点中优先完整的单一代码窗口。

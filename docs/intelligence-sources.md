@@ -9,6 +9,7 @@ Issue #1707 的首版能力聚焦“合规资讯源采集、本地沉淀、可�
 - 支持配置 RSS / Atom HTTP(S) 资讯源。
 - 支持 NewsNow HTTP JSON 源，默认内置财联社热门、雪球热门股票、华尔街见闻快讯、金十数据和格隆汇事件等主流财经源。
 - 支持查询内置 RSS/Atom/NewsNow 模板，并可从模板创建可测试、可启停的资讯源；也可以一键创建全部内置默认源。
+- 内置 15 个精选 RSS 试点模板，覆盖宏观、AI、软件、半导体、新能源汽车、光伏、储能、医药、网络安全和商业航天；试点模板默认禁用，不会被自动刷新开关隐式启用。
 - 保存资讯源配置、启用状态、作用域和最近一次拉取状态。
 - 拉取条目落库到 `intelligence_items`，保存标题、摘要、URL、来源、发布时间、拉取时间、市场与作用域。
 - 按 URL 去重；无 URL 条目使用 `no-url:intel:<hash>` 兜底键。
@@ -42,7 +43,7 @@ NEWSNOW_BASE_URL=https://newsnow.busiyi.world
 
 `NEWSNOW_BASE_URL` 用于拼出 `GET {NEWSNOW_BASE_URL}/api/s?id=<source_id>`。
 
-`NEWS_INTEL_AUTO_FETCH_ENABLED` 默认关闭。设为 `true` 后，个股分析、Agent 分析和大盘复盘在读取本地资讯池前会先执行一次 fail-open 自动刷新：缺少内置资讯源时自动创建并启用默认源，已有但禁用的内置默认源会重新启用，然后拉取全部启用源并写入 `intelligence_items`。为避免每只股票重复请求外部站点，运行进程内有 60 分钟冷却；冷却内复用本地库数据。
+`NEWS_INTEL_AUTO_FETCH_ENABLED` 默认关闭。设为 `true` 后，个股分析、Agent 分析和大盘复盘在读取本地资讯池前会先执行一次 fail-open 自动刷新：缺少基础内置资讯源时自动创建并启用，已有但禁用的基础内置源会重新启用，然后拉取全部启用源并写入 `intelligence_items`。15 个精选 RSS 试点模板标记为 `pilot=true`、`auto_enable=false`，不会被该开关隐式创建或启用；需要先通过模板接口按需创建并显式启用。为避免每只股票重复请求外部站点，运行进程内有 60 分钟冷却；冷却内复用本地库数据。
 
 **外部依赖兼容性说明：**
 
@@ -83,6 +84,21 @@ NEWS_INTEL_AUTO_FETCH_ENABLED=true
 ```
 
 该开关代表用户明确同意运行时访问已配置的外部 RSS/Atom/NewsNow HTTP 源；默认关闭是为了避免未确认的外部请求、公开 NewsNow 示例实例压力和分析 prompt 输入变化。
+
+## 精选 RSS 试点
+
+第一批 15 个模板均为公开 RSS/Atom 地址，默认不创建、不启用：
+
+| 方向 | 模板 |
+| --- | --- |
+| 宏观 | Federal Reserve Press Releases、ECB Press Releases |
+| AI / 软件 | OpenAI News、Google Research Blog、Google DeepMind Blog、Hugging Face Blog、GitHub Blog |
+| 半导体 / 新能源 | Semiconductor Engineering、CnEVPost、pv magazine International、Energy-Storage.news |
+| 医药 / 安全 / 航天 | STAT、Fierce Biotech、Microsoft Security Blog、SpaceNews |
+
+启用流程为“查询模板 -> 创建单源并保持禁用 -> `POST /sources/test` 或单源 fetch 验证 -> 显式启用”。分析读取时会先取标的级、同市场资讯，再补充 `market=global` 的试点证据并按 URL 去重，最终仍受新闻时间窗口和最多 6 条上下文限制。建议第一周只启用与关注标的行业直接相关的 4–6 个源，观察成功率、重复率和每轮延迟后再扩容。
+
+这些来源是行业/公司/媒体证据，不等价于发行人法定披露；SEC 与 HKEXnews 的官方披露走独立的结构化监管链路，不能被 RSS 覆盖或替代。
 
 > 说明：该开关只有在实际执行进程环境变量中可见时才会生效。仓库默认随带的 `00-daily-analysis.yml` 为 `env` 采用 allowlist 映射策略，未显式列入映射时，即便在仓库 Variables/Secrets 中设置同名变量也不会注入运行环境，因此默认 workflow 中不会自动接收该开关。若要在仓库自带每日分析任务里开启该能力，请在 workflow 中显式添加该变量透传，或改为本地/Docker 直接配置环境变量运行。
 

@@ -40,11 +40,13 @@ _AUTO_FETCH_MIN_INTERVAL_SECONDS = 60 * 60
 _BUILTIN_SOURCE_TEMPLATES = [
     {
         "template_id": "sec-company-news",
-        "name": "SEC Latest Filings",
+        "name": "SEC Press Releases",
         "source_type": "rss",
         "url": "https://www.sec.gov/news/pressreleases.rss",
         "scope_type": "market",
         "market": "us",
+        "auto_enable": True,
+        "pilot": False,
         "description": "SEC official press release RSS feed for US market evidence.",
     },
     {
@@ -54,6 +56,8 @@ _BUILTIN_SOURCE_TEMPLATES = [
         "url": "https://www.hkex.com.hk/Services/RSS-Feeds/News-Releases?sc_lang=en",
         "scope_type": "market",
         "market": "hk",
+        "auto_enable": True,
+        "pilot": False,
         "description": "HKEX public news entry for Hong Kong market evidence. Test before enabling.",
     },
     {
@@ -63,8 +67,27 @@ _BUILTIN_SOURCE_TEMPLATES = [
         "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
         "scope_type": "market",
         "market": "global",
+        "auto_enable": True,
+        "pilot": False,
         "description": "Public market news RSS for global market context. Test before enabling.",
     },
+]
+_CURATED_RSS_PILOT_TEMPLATES = [
+    ("rss-pilot-fed", "Federal Reserve Press Releases", "https://www.federalreserve.gov/feeds/press_all.xml", "global", "macro", "US monetary policy and regulatory releases."),
+    ("rss-pilot-ecb", "ECB Press Releases", "https://www.ecb.europa.eu/rss/press.html", "global", "macro", "Official euro-area monetary policy and central-bank releases."),
+    ("rss-pilot-openai", "OpenAI News", "https://openai.com/news/rss.xml", "global", "ai", "AI product, model, and company updates."),
+    ("rss-pilot-google-research", "Google Research Blog", "https://research.google/blog/rss/", "global", "ai", "AI research and applied technology developments."),
+    ("rss-pilot-deepmind", "Google DeepMind Blog", "https://deepmind.google/blog/rss.xml", "global", "ai", "Frontier AI research and product developments."),
+    ("rss-pilot-huggingface", "Hugging Face Blog", "https://huggingface.co/blog/feed.xml", "global", "ai", "Open-source AI ecosystem and model releases."),
+    ("rss-pilot-github", "GitHub Blog", "https://github.blog/feed/", "global", "software", "Developer tooling, security, and software ecosystem updates."),
+    ("rss-pilot-semieng", "Semiconductor Engineering", "https://semiengineering.com/feed/", "global", "semiconductors", "Semiconductor design, manufacturing, packaging, and supply-chain depth."),
+    ("rss-pilot-cnevpost", "CnEVPost", "https://cnevpost.com/feed/", "global", "ev", "China EV makers, batteries, deliveries, and industry policy."),
+    ("rss-pilot-pv-magazine", "pv magazine International", "https://www.pv-magazine.com/feed/", "global", "solar", "Solar manufacturing, projects, prices, and policy."),
+    ("rss-pilot-energy-storage", "Energy-Storage.news", "https://www.energy-storage.news/feed/", "global", "energy_storage", "Grid and battery energy-storage projects and regulation."),
+    ("rss-pilot-stat", "STAT", "https://www.statnews.com/feed/", "global", "healthcare", "Biopharma, healthcare policy, and clinical developments."),
+    ("rss-pilot-fiercebiotech", "Fierce Biotech", "https://www.fiercebiotech.com/rss/xml", "global", "biotech", "Biotech pipelines, trials, financing, and regulation."),
+    ("rss-pilot-microsoft-security", "Microsoft Security Blog", "https://www.microsoft.com/en-us/security/blog/feed/", "global", "cybersecurity", "First-party enterprise security research, incidents, and threat intelligence."),
+    ("rss-pilot-spacenews", "SpaceNews", "https://spacenews.com/feed/", "global", "aerospace", "Commercial space, launch, satellite, and defence-space developments."),
 ]
 _NEWSNOW_DEFAULT_SOURCE_DEFS = [
     {
@@ -206,7 +229,11 @@ class IntelligenceService:
         created_count = 0
         enabled_count = 0
         errors = []
-        templates = self._builtin_source_templates()
+        templates = [
+            template
+            for template in self._builtin_source_templates()
+            if template.get("auto_enable", True)
+        ]
         for template in templates:
             name = str(template["name"])
             try:
@@ -811,7 +838,22 @@ class IntelligenceService:
                 "url": self._build_newsnow_url(item["source_id"]),
                 "scope_type": "market",
                 "market": item["market"],
+                "auto_enable": True,
+                "pilot": False,
                 "description": item["description"],
+            })
+        for template_id, name, url, market, sector, description in _CURATED_RSS_PILOT_TEMPLATES:
+            templates.append({
+                "template_id": template_id,
+                "name": name,
+                "source_type": "rss",
+                "url": url,
+                "scope_type": "market",
+                "market": market,
+                "sector": sector,
+                "auto_enable": False,
+                "pilot": True,
+                "description": description,
             })
         return templates
 

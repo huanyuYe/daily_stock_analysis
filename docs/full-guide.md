@@ -383,6 +383,10 @@ A 股个股分析会通过现有 AkShare 依赖 best-effort 拉取两类近期�
 
 两路数据共用 `NEWS_STRATEGY_PROFILE` 与 `NEWS_MAX_AGE_DAYS` 计算的有效窗口，并沿用 `NEWS_INTEL_FETCH_TIMEOUT_SEC` 的单次拉取超时。结果统一规范为事件类型、影响方向、重要性、来源层级和发布时间；去重后生成 `event_regime`、`event_score`、官方公告数及高重要性负面事件数。任一路失败都会保留来源状态与 warning 并继续使用另一路；两路均失败时返回 `missing`，不会中断技术面、基本面或报告生成。
 
+港股与美股另有结构化监管披露链路。美股的 SEC-A 读取 EDGAR `submissions/CIK##########.json` 申报元数据，SEC-B 读取 `companyfacts/CIK##########.json` 并按 `filed_at` 选择最新已申报的核心 XBRL 事实；港股通过公共 HKEXnews Title Search 获取发行人披露的发布日期、标题和原文链接。所有记录保留 `source_id`、`source_tier=official_regulator`、`verification_status=official_primary`、截至时间和来源状态；公共 HKEXnews 页面适配器不宣称为受支持的官方 API，也不抓取 PDF 正文。配置项为 `REGULATORY_DISCLOSURES_ENABLED`（默认 `true`）、`REGULATORY_FETCH_TIMEOUT_SEC`（默认 8 秒）和 `SEC_EDGAR_USER_AGENT`。任一来源失败均 fail-open，不阻断行情、技术面或报告生成。
+
+本地资讯池增加了 15 个精选 RSS 试点模板，覆盖宏观、AI、软件、半导体、新能源汽车、光伏、储能、医药、网络安全和商业航天。试点模板默认禁用，并且不会被 `NEWS_INTEL_AUTO_FETCH_ENABLED` 隐式启用；启用后，个股上下文会在标的级和同市场资讯之后补充 `global` 资讯，仍按 URL 去重并受窗口与条数上限约束。源清单、启用步骤和成本边界见 [资讯 / 情报源 MVP](intelligence-sources.md)。
+
 结构化事件会进入以下决策路径：
 
 - 普通分析：追加到既有 `news_context`，要求模型优先采用官方公告，并评估影响路径、兑现周期与价格是否已反映；
@@ -391,6 +395,12 @@ A 股个股分析会通过现有 AkShare 依赖 best-effort 拉取两类近期�
 - 后验复盘：仅将低敏统计摘要写入 DecisionSignal metadata，原始事件数组不会进入该 metadata；为保持既有报告证据契约，实际进入模型的事件文本仍会随 analysis history 的 `news_content` 保存。
 
 当前边界：事件分类与影响方向是确定性关键词规则，不替代原文核验；`event_score` 只用于上下文排序和风险提示，不会直接覆盖最终买卖动作。当前版本也不宣称已完成事件单因子收益归因或基于后验结果自动调权。
+
+### A 股结构化券商研报元数据
+
+多维情报搜索的“机构分析”维度会优先按精确六位 A 股代码读取东方财富近 180 天券商研报元数据；IntelAgent 也可调用只读工具 `get_research_reports`。该链路无需搜索 API Key，只返回标题、机构、发布日期、行业、评级、未来三年 EPS 预测和原始链接，不下载或解析 PDF 正文。
+
+所有记录都会标记 `source_tier=sell_side_aggregator` 与 `verification_status=single_source_opinion`。评级和 EPS 预测属于第三方卖方观点，不是公司公告、已实现业绩或独立核验事实；直接接口失败或无覆盖时，多维情报搜索继续使用原搜索 provider，主分析链路保持 fail-open。跨市场对比、真实性/时效性评估和后续 SEC/HKEX 扩展顺序见 [Vibe-Research 跨市场数据源对比与扩展决策](cross-market-data-source-expansion.md)。
 
 ### 新闻检索可解释排序（Issue #1356）
 

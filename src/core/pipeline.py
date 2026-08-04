@@ -71,6 +71,10 @@ from src.services.stock_event_service import (
     AShareStockEventService,
     StockEventBundle,
 )
+from src.services.regulatory_disclosure_service import (
+    RegulatoryDisclosureBundle,
+    RegulatoryDisclosureService,
+)
 from src.services.analysis_context_builder import (
     AnalysisContextBuilder,
     PipelineAnalysisArtifacts,
@@ -270,6 +274,9 @@ class StockAnalysisPipeline:
             logger.warning("搜索服务初始化失败，将以无搜索模式运行: %s", exc, exc_info=True)
             self.search_service = None
         self.stock_event_service = AShareStockEventService(config=self.config)
+        self.regulatory_disclosure_service = RegulatoryDisclosureService(
+            config=self.config,
+        )
         
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
         logger.info("已启用技术分析引擎（均线/趋势/量价指标）")
@@ -594,6 +601,10 @@ class StockAnalysisPipeline:
                 and stock_event_bundle.status != "unsupported"
                 else None
             )
+            regulatory_bundle = self._fetch_regulatory_disclosure_bundle(
+                code=code,
+                stock_name=stock_name,
+            )
             persisted_intelligence_context = self._load_persisted_intelligence_context(
                 code=code,
                 stock_name=stock_name,
@@ -649,6 +660,17 @@ class StockAnalysisPipeline:
                     )
                     news_result_count = (news_result_count or 0) + len(
                         stock_event_bundle.events
+                    )
+            if regulatory_bundle is not None:
+                regulatory_context = regulatory_bundle.to_prompt_context()
+                if regulatory_context:
+                    news_context = (
+                        f"{regulatory_context}\n\n{news_context}"
+                        if news_context
+                        else regulatory_context
+                    )
+                    news_result_count = (news_result_count or 0) + len(
+                        regulatory_bundle.filings
                     )
 
             # Step 4.5: Social sentiment intelligence (US stocks only)
@@ -1414,6 +1436,10 @@ class StockAnalysisPipeline:
                 and stock_event_bundle.status != "unsupported"
                 else None
             )
+            regulatory_bundle = self._fetch_regulatory_disclosure_bundle(
+                code=code,
+                stock_name=stock_name,
+            )
             if (
                 stock_event_bundle is not None
                 and stock_event_bundle.status != "unsupported"
@@ -1428,6 +1454,26 @@ class StockAnalysisPipeline:
                         "[%s] Agent mode: injected %s structured stock events",
                         code,
                         len(stock_event_bundle.events),
+                    )
+            if (
+                regulatory_bundle is not None
+                and regulatory_bundle.status not in {"unsupported", "disabled"}
+            ):
+                initial_context["regulatory_disclosures"] = regulatory_bundle.to_dict(
+                    include_items=True
+                )
+                regulatory_context = regulatory_bundle.to_prompt_context()
+                if regulatory_context:
+                    existing = initial_context.get("news_context")
+                    initial_context["news_context"] = (
+                        f"{regulatory_context}\n\n{existing}"
+                        if existing
+                        else regulatory_context
+                    )
+                    logger.info(
+                        "[%s] Agent mode: injected %s official regulatory disclosures",
+                        code,
+                        len(regulatory_bundle.filings),
                     )
 
             # Agent path: inject social sentiment as news_context so both
@@ -2851,6 +2897,37 @@ class StockAnalysisPipeline:
             )
             return None
 
+    def _fetch_regulatory_disclosure_bundle(
+        self,
+        *,
+        code: str,
+        stock_name: str,
+    ) -> Optional[RegulatoryDisclosureBundle]:
+        """Fetch official US/HK disclosures without blocking the analysis."""
+        service = getattr(self, "regulatory_disclosure_service", None)
+        if service is None:
+            return None
+        try:
+            bundle = service.fetch(code, stock_name)
+            if bundle.status in {"available", "degraded"}:
+                logger.info(
+                    "%s(%s) regulatory disclosures: status=%s filings=%s facts=%s",
+                    stock_name,
+                    code,
+                    bundle.status,
+                    len(bundle.filings),
+                    len(bundle.company_facts),
+                )
+            return bundle
+        except Exception as exc:
+            logger.warning(
+                "%s(%s) regulatory disclosure fetch failed (fail-open): %s",
+                stock_name,
+                code,
+                type(exc).__name__,
+            )
+            return None
+
     def _load_persisted_intelligence_context(
         self,
         *,
@@ -2870,7 +2947,10 @@ class StockAnalysisPipeline:
                 {"scope_type": "symbol", "scope_value": scope_value, "market": market}
                 for scope_value in _symbol_scope_lookup_values(code, market)
             ]
-            for filters in symbol_filters + [{"scope_type": "market", "market": market}]:
+            market_filters = [{"scope_type": "market", "market": market}]
+            if market != "global":
+                market_filters.append({"scope_type": "market", "market": "global"})
+            for filters in symbol_filters + market_filters:
                 payload = service.list_items(published_days=days, page=1, page_size=limit, **filters)
                 for item in payload.get("items", []):
                     if not isinstance(item, dict):
@@ -3046,6 +3126,7 @@ class StockAnalysisPipeline:
         sanitized.pop("analysis_context_pack_summary", None)
         sanitized.pop("daily_market_context_summary", None)
         sanitized.pop("stock_events", None)
+        sanitized.pop("regulatory_disclosures", None)
         enhanced_context = sanitized.get("enhanced_context")
         if isinstance(enhanced_context, dict):
             enhanced_context = dict(enhanced_context)

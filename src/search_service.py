@@ -4028,7 +4028,92 @@ class SearchService:
             success=False,
             error_message="事件搜索失败"
         )
-    
+
+    def search_stock_research_reports(
+        self,
+        stock_code: str,
+        *,
+        max_results: int = 5,
+        lookback_days: int = ANALYTICAL_INTEL_LOOKBACK_DAYS,
+    ) -> SearchResponse:
+        """Fetch structured A-share sell-side report metadata.
+
+        This direct source does not require a general search-engine API key.
+        Ratings and EPS estimates remain explicitly labelled as broker opinions.
+        """
+        from src.services.research_report_service import (
+            AShareResearchReportService,
+        )
+
+        safe_max_results = max(1, min(int(max_results), 20))
+        bundle = AShareResearchReportService().fetch(
+            stock_code,
+            max_reports=safe_max_results,
+            lookback_days=lookback_days,
+        )
+        query = f"{stock_code} A股券商研报元数据"
+        if bundle.status == "unsupported":
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider="EastMoneyResearch",
+                success=False,
+                error_message="structured research reports only support A-shares",
+            )
+        if bundle.status == "missing":
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider="EastMoneyResearch",
+                success=False,
+                error_message="EastMoney research metadata unavailable",
+            )
+
+        results: List[SearchResult] = []
+        for report in bundle.reports[:safe_max_results]:
+            details = [
+                f"机构={report.organization or '未知'}",
+                f"来源层级={report.source_tier}",
+                f"核验状态={report.verification_status}",
+            ]
+            if report.rating:
+                details.append(f"卖方评级={report.rating}")
+            forecasts = [
+                (report.published_date.year, report.eps_this_year),
+                (report.published_date.year + 1, report.eps_next_year),
+                (report.published_date.year + 2, report.eps_next_two_year),
+            ]
+            forecast_text = "、".join(
+                f"{year}E EPS={value:g}"
+                for year, value in forecasts
+                if value is not None
+            )
+            if forecast_text:
+                details.append(forecast_text)
+            details.append("评级与预测均为第三方卖方观点，不代表已实现业绩")
+            results.append(
+                SearchResult(
+                    title=report.title,
+                    snippet="；".join(details),
+                    url=report.url,
+                    source=(
+                        f"{report.organization} via 东方财富"
+                        if report.organization
+                        else "东方财富研报聚合"
+                    ),
+                    published_date=report.published_date.isoformat(),
+                    relevance_score=100,
+                    relevance_category=self._DIRECT_NEWS_CATEGORY,
+                    relevance_reasons=["A股代码精确匹配", "结构化券商研报元数据"],
+                )
+            )
+        return SearchResponse(
+            query=query,
+            results=results,
+            provider="EastMoneyResearch",
+            success=True,
+        )
+
     def search_comprehensive_intel(
         self,
         stock_code: str,
@@ -4174,6 +4259,19 @@ class SearchService:
         target_per_dimension = 3
         provider_max_results = self._provider_request_size(target_per_dimension)
 
+        # A-share sell-side metadata is a direct, exact-code source. Prefer it
+        # for the institution-analysis dimension, while keeping web search as a
+        # fallback when the endpoint is unavailable or returns no coverage.
+        if not is_foreign and not is_index_etf and search_count < max_searches:
+            direct_research = self.search_stock_research_reports(
+                stock_code,
+                max_results=target_per_dimension,
+                lookback_days=self.ANALYTICAL_INTEL_LOOKBACK_DAYS,
+            )
+            if direct_research.success and direct_research.results:
+                results["market_analysis"] = direct_research
+                search_count += 1
+
         logger.info(
             (
                 "开始多维度情报搜索: %s(%s), 时间范围: 近%s天 "
@@ -4194,11 +4292,13 @@ class SearchService:
         for dim in search_dimensions:
             if search_count >= max_searches:
                 break
+            if dim["name"] in results:
+                continue
             
             # 选择搜索引擎（轮流使用）
             available_providers = [p for p in self._providers if p.is_available]
             if not available_providers:
-                break
+                continue
             
             provider = available_providers[provider_index % len(available_providers)]
             provider_index += 1

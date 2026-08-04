@@ -26,6 +26,7 @@
 | [FAQ](FAQ.md) | 常见配置、模型、通知、部署和运行问题 |
 | [数据源稳定性与故障处理图示](data-source-stability.md) | Tushare、TickFlow、AkShare、Efinance、YFinance、Longbridge 等已接入源的使用场景、fallback 链路和推荐配置 |
 | [A 股财报、事件与策略数据源决策](a-share-fundamental-data-sources.md) | A 股免费财报/资金流/事件链路、当前缺口、Tushare 积分门槛和付费升级顺序 |
+| [Vibe-Research 跨市场数据源对比与扩展决策](cross-market-data-source-expansion.md) | 对比 A/港/美股行情、财务、公告、研报和资讯源，记录真实性/时效性/丰富度评估与扩展优先级 |
 | [更新日志](CHANGELOG.md) | 版本变化、能力调整和迁移说明 |
 
 ## 配置

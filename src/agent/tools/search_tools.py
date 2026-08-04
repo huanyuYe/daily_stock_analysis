@@ -6,6 +6,8 @@ Tools:
 - search_stock_news: search latest stock news
 - search_comprehensive_intel: multi-dimensional intelligence search
 - get_stock_events: fetch structured A-share disclosures and stock news events
+- get_research_reports: fetch structured A-share sell-side report metadata
+- get_regulatory_disclosures: fetch official SEC/HKEXnews issuer evidence
 """
 
 import logging
@@ -30,6 +32,18 @@ _EVENT_READ_POLICY = ToolPolicy.declared(
     read_only=True,
     side_effects=["network_read", "db_write_cache"],
     permissions=["news:read"],
+    scope_dimensions=["stock"],
+)
+_RESEARCH_READ_POLICY = ToolPolicy.declared(
+    read_only=True,
+    side_effects=["network_read"],
+    permissions=["intel:read"],
+    scope_dimensions=["stock"],
+)
+_REGULATORY_READ_POLICY = ToolPolicy.declared(
+    read_only=True,
+    side_effects=["network_read"],
+    permissions=["intel:read"],
     scope_dimensions=["stock"],
 )
 
@@ -191,15 +205,96 @@ get_stock_events_tool = ToolDefinition(
 
 
 # ============================================================
+# get_research_reports
+# ============================================================
+
+def _handle_get_research_reports(stock_code: str) -> dict:
+    """Fetch normalized A-share sell-side research metadata."""
+    from src.services.research_report_service import (
+        AShareResearchReportService,
+    )
+
+    return AShareResearchReportService().fetch(
+        stock_code,
+        max_reports=5,
+        lookback_days=180,
+    ).to_dict()
+
+
+get_research_reports_tool = ToolDefinition(
+    name="get_research_reports",
+    description=(
+        "Fetch recent A-share broker research report metadata by exact stock code. "
+        "Returns institution, publication date, rating, EPS forecasts, provenance, "
+        "and the original report link. Ratings and forecasts are third-party "
+        "sell-side opinions, not verified company facts. Unsupported markets "
+        "return status=unsupported."
+    ),
+    parameters=[
+        ToolParameter(
+            name="stock_code",
+            type="string",
+            description="Six-digit A-share stock code, e.g., '600519'.",
+        ),
+    ],
+    handler=_handle_get_research_reports,
+    category="search",
+    policy=_RESEARCH_READ_POLICY,
+)
+
+
+# ============================================================
+# get_regulatory_disclosures
+# ============================================================
+
+def _handle_get_regulatory_disclosures(stock_code: str, stock_name: str = "") -> dict:
+    """Fetch official SEC or public HKEXnews issuer disclosures."""
+    from src.services.regulatory_disclosure_service import RegulatoryDisclosureService
+
+    return RegulatoryDisclosureService().fetch(
+        stock_code,
+        stock_name,
+        max_filings=12,
+        lookback_days=120,
+    ).to_dict(include_items=True)
+
+
+get_regulatory_disclosures_tool = ToolDefinition(
+    name="get_regulatory_disclosures",
+    description=(
+        "Fetch official issuer evidence for US and Hong Kong stocks. US output "
+        "combines SEC submissions (SEC-A) and point-in-time SEC XBRL company facts "
+        "(SEC-B). Hong Kong output uses the public HKEXnews Title Search. Returns "
+        "filing dates, form/category, original links, source tier, verification "
+        "status, and source diagnostics. Unsupported markets return "
+        "status=unsupported."
+    ),
+    parameters=[
+        ToolParameter(
+            name="stock_code",
+            type="string",
+            description="US ticker or Hong Kong stock code, e.g., 'AAPL' or 'hk00700'.",
+        ),
+        ToolParameter(
+            name="stock_name",
+            type="string",
+            description="Optional issuer name.",
+            required=False,
+        ),
+    ],
+    handler=_handle_get_regulatory_disclosures,
+    category="search",
+    policy=_REGULATORY_READ_POLICY,
+)
+
+
+# ============================================================
 # search_comprehensive_intel
 # ============================================================
 
 def _handle_search_comprehensive_intel(stock_code: str, stock_name: str) -> dict:
     """Multi-dimensional intelligence search."""
     service = _get_search_service()
-
-    if not service.is_available:
-        return {"error": "No search engine available (no API keys configured)"}
 
     intel_results = service.search_comprehensive_intel(
         stock_code=stock_code,
@@ -208,6 +303,8 @@ def _handle_search_comprehensive_intel(stock_code: str, stock_name: str) -> dict
     )
 
     if not intel_results:
+        if not service.is_available:
+            return {"error": "No search engine available (no API keys configured)"}
         return {"error": "Comprehensive intel search returned no results"}
 
     # Format into readable report
@@ -268,5 +365,7 @@ search_comprehensive_intel_tool = ToolDefinition(
 ALL_SEARCH_TOOLS = [
     search_stock_news_tool,
     get_stock_events_tool,
+    get_research_reports_tool,
+    get_regulatory_disclosures_tool,
     search_comprehensive_intel_tool,
 ]

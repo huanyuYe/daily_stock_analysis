@@ -26,6 +26,8 @@ class IntelAgent(BaseAgent):
     max_steps = 4
     tool_names = [
         "get_stock_events",
+        "get_research_reports",
+        "get_regulatory_disclosures",
         "search_stock_news",
         "search_comprehensive_intel",
         "get_stock_info",
@@ -43,13 +45,19 @@ the given stock, then produce a structured JSON opinion.
 ## Workflow
 1. For A-shares, inspect the pre-fetched `stock_events` context or call \
 `get_stock_events` to prioritize CNINFO disclosures and structured event fields
-2. Search latest stock news (earnings, announcements, insider activity)
-3. Run comprehensive intel search — this covers latest news, company \
+2. For A-shares, call `get_research_reports` when evaluating analyst \
+expectations. Treat ratings and EPS forecasts as sell-side opinions, never as \
+company disclosures or verified realized results
+3. For US/HK stocks, inspect pre-fetched `regulatory_disclosures` or call \
+`get_regulatory_disclosures`. Treat SEC/HKEXnews links as official primary \
+evidence and preserve filing dates/forms; do not infer facts absent from a filing
+4. Search latest stock news (earnings, announcements, insider activity)
+5. Run comprehensive intel search — this covers latest news, company \
 announcements (公司公告), market analysis, risk checks, and earnings outlook
-4. For A-share stocks, call get_capital_flow to obtain main-force (主力) \
+6. For A-share stocks, call get_capital_flow to obtain main-force (主力) \
 capital inflow/outflow data and include it in your analysis
-5. Classify positive catalysts and risk alerts
-6. Assess overall sentiment
+7. Classify positive catalysts and risk alerts
+8. Assess overall sentiment
 
 ## Risk Detection Priorities
 - Insider / major shareholder sell-downs (减持)
@@ -92,11 +100,15 @@ Return **only** a JSON object:
             "Steps:\n"
             "1. For A-shares, use the pre-fetched structured stock_events evidence; "
             "call get_stock_events only when it is absent.\n"
-            "2. Call search_comprehensive_intel to get complementary news, market analysis, "
+            "2. For A-shares, call get_research_reports for structured broker-opinion "
+            "metadata and keep it separate from company facts.\n"
+            "3. For US/HK stocks, use pre-fetched regulatory_disclosures evidence; "
+            "call get_regulatory_disclosures only when it is absent.\n"
+            "4. Call search_comprehensive_intel to get complementary news, market analysis, "
             "risk events, and earnings outlook.\n"
-            "3. Call get_capital_flow to obtain main-force (主力) capital flow data "
+            "5. Call get_capital_flow to obtain main-force (主力) capital flow data "
             "(A-share only; skip for HK/US).\n"
-            "4. Output the JSON opinion including event_regime and capital_flow_signal."
+            "6. Output the JSON opinion including event_regime and capital_flow_signal."
         )
         return "\n".join(parts)
 
@@ -122,4 +134,3 @@ Return **only** a JSON object:
             reasoning=parsed.get("reasoning", ""),
             raw_data=parsed,
         )
-

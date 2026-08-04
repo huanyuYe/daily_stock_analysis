@@ -230,6 +230,28 @@ class IntelligenceServiceTestCase(unittest.TestCase):
         self.assertNotIn("token=secret", failures[0]["error"])
         self.assertNotIn("secret", failures[0]["error"])
 
+    def test_curated_rss_pilot_has_fifteen_disabled_templates(self) -> None:
+        payload = self.service.list_source_templates(source_type="rss")
+        pilot = [item for item in payload["items"] if item.get("pilot")]
+        self.assertEqual(len(pilot), 15)
+        self.assertTrue(all(item["auto_enable"] is False for item in pilot))
+        self.assertEqual(len({item["url"] for item in pilot}), 15)
+
+    def test_auto_bootstrap_excludes_curated_rss_pilot(self) -> None:
+        result = self.service.ensure_default_sources_enabled()
+        names = {
+            item["name"]
+            for item in self.service.list_sources(page=1, page_size=100)["items"]
+        }
+        pilot_names = {
+            item["name"]
+            for item in self.service.list_source_templates(source_type="rss")["items"]
+            if item.get("pilot")
+        }
+        self.assertEqual(result["total"], 8)
+        self.assertTrue(pilot_names)
+        self.assertTrue(names.isdisjoint(pilot_names))
+
     def test_fetch_enabled_sources_paginates_all_enabled_sources(self) -> None:
         for index in range(150):
             self.service.create_source({
@@ -390,8 +412,9 @@ class IntelligenceServiceTestCase(unittest.TestCase):
             result = self.service.refresh_auto_sources(force=True)
 
         self.assertEqual(result["bootstrap"]["created_count"], 0)
-        self.assertEqual(result["bootstrap"]["enabled_count"], created["total"])
-        self.assertEqual(self.service.list_sources(enabled=True)["total"], created["total"])
+        self.assertEqual(result["bootstrap"]["enabled_count"], 8)
+        self.assertEqual(self.service.list_sources(enabled=True)["total"], 8)
+        self.assertEqual(created["total"] - 8, 15)
 
     def test_refresh_auto_sources_uses_cooldown_after_success(self) -> None:
         self.service.config.news_intel_auto_fetch_enabled = True

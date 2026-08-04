@@ -27,6 +27,7 @@ This is the entry point for project documentation. The README covers the project
 | [FAQ (EN)](FAQ_EN.md) | Common configuration, model, notification, deployment, and runtime issues |
 | [Data-source stability diagrams](data-source-stability.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | Existing-source routing, fallback chains, and recommended configuration profiles |
 | [A-share fundamental and event data-source decision](a-share-fundamental-data-sources.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | Free statement, capital-flow, and event routes; remaining gaps; Tushare point thresholds and upgrade order |
+| [Vibe-Research cross-market data-source assessment](cross-market-data-source-expansion.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | A/H/US source authenticity, freshness, coverage comparison, and expansion priorities |
 | [Changelog](CHANGELOG.md) | Release notes, capability changes, and migration notes |
 
 ## Configuration
