@@ -107,6 +107,123 @@ def test_tencent_symbol_conversion_supports_a_share_markets() -> None:
     assert _to_tencent_symbol("600519") == "sh600519"
     assert _to_tencent_symbol("000001") == "sz000001"
     assert _to_tencent_symbol("920748") == "bj920748"
+    assert _to_tencent_symbol("hk00700") == "hk00700"
+    assert _to_tencent_symbol("00700") == "hk00700"
+    assert _to_tencent_symbol("NVDA") == "usNVDA"
+
+
+def test_tencent_fetcher_resolves_us_exchange_and_parses_daily_history() -> None:
+    class QuoteResponse:
+        content = (
+            'v_usNVDA="200~英伟达~NVDA.OQ~211.94~206.64~211.30~134921997";'
+        ).encode("gb18030")
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class KlineResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "data": {
+                    "usNVDA.OQ": {
+                        "day": [
+                            ["2026-08-03", "197.69", "206.64", "208.00", "196.00", "120000000"],
+                            ["2026-08-04", "211.30", "211.94", "213.06", "209.05", "134921997"],
+                        ]
+                    }
+                }
+            }
+
+    with patch(
+        "data_provider.tencent_fetcher.requests.get",
+        side_effect=[QuoteResponse(), KlineResponse()],
+    ) as mocked_get:
+        df = TencentFetcher().get_daily_data(
+            "NVDA",
+            start_date="2026-08-01",
+            end_date="2026-08-05",
+        )
+
+    assert mocked_get.call_args_list[0].args[0].endswith("q=usNVDA")
+    assert mocked_get.call_args_list[1].kwargs["params"]["param"].startswith(
+        "usNVDA.OQ,day,2026-08-01,2026-08-05,"
+    )
+    assert len(df) == 2
+    assert float(df.iloc[-1]["close"]) == 211.94
+    assert float(df.iloc[-1]["volume"]) == 134921997.0
+
+
+def test_tencent_fetcher_parses_hk_realtime_quote_with_provider_time() -> None:
+    fields = [""] * 50
+    fields[1] = "腾讯控股"
+    fields[2] = "00700"
+    fields[3] = "494.600"
+    fields[4] = "487.600"
+    fields[5] = "493.400"
+    fields[6] = "13860341"
+    fields[30] = "2026/08/05 11:25:01"
+    fields[31] = "7.000"
+    fields[32] = "1.44"
+    fields[33] = "497.800"
+    fields[34] = "482.200"
+    fields[35] = "HKD"
+    fields[37] = "6819566725.209"
+    fields[43] = "3.20"
+    fields[44] = "44971.5856"
+    fields[45] = "44971.5856"
+
+    class QuoteResponse:
+        content = f'v_hk00700="{"~".join(fields)}";'.encode("gb18030")
+
+        def raise_for_status(self) -> None:
+            return None
+
+    with patch("data_provider.tencent_fetcher.requests.get", return_value=QuoteResponse()):
+        quote = TencentFetcher().get_realtime_quote("hk00700")
+
+    assert quote is not None
+    assert quote.source.value == "tencent"
+    assert quote.market == "hk"
+    assert quote.currency == "HKD"
+    assert quote.price == 494.6
+    assert quote.provider_timestamp == "2026-08-05T11:25:01+08:00"
+
+
+def test_tencent_fetcher_gets_us_main_indices() -> None:
+    def response_for(symbol: str):
+        fields = [""] * 50
+        fields[1] = symbol
+        fields[3] = "100.0"
+        fields[4] = "98.0"
+        fields[5] = "99.0"
+        fields[6] = "123"
+        fields[30] = "2026-08-04 16:00:00"
+        fields[31] = "2.0"
+        fields[32] = "2.04"
+        fields[33] = "101.0"
+        fields[34] = "97.0"
+        fields[37] = "456"
+
+        class QuoteResponse:
+            content = f'v_{symbol}="{"~".join(fields)}";'.encode("gb18030")
+
+            def raise_for_status(self) -> None:
+                return None
+
+        return QuoteResponse()
+
+    with patch(
+        "data_provider.tencent_fetcher.requests.get",
+        side_effect=lambda url, **kwargs: response_for(url.rsplit("=", 1)[-1]),
+    ):
+        indices = TencentFetcher().get_main_indices("us")
+
+    assert indices is not None
+    assert [item["code"] for item in indices] == ["SPX", "IXIC", "DJI"]
+    assert all(item["source"] == "TencentFetcher" for item in indices)
 
 
 def test_tencent_fetcher_parses_qfq_daily_response() -> None:

@@ -307,6 +307,13 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        '--stock-market',
+        type=str.lower,
+        choices=('cn', 'hk', 'us', 'jp', 'kr', 'tw'),
+        help='仅分析指定市场的股票；用于从混合 STOCK_LIST 中隔离市场任务'
+    )
+
+    parser.add_argument(
         '--portfolio',
         type=str.lower,
         choices=('futu',),
@@ -561,6 +568,32 @@ def _resolve_portfolio_stock_codes(args: argparse.Namespace) -> Optional[List[st
     return stock_codes
 
 
+def _filter_stock_codes_by_requested_market(
+    stock_codes: List[str],
+    requested_market: Optional[str],
+) -> List[str]:
+    """Keep only codes belonging to an explicitly requested market."""
+    market = str(requested_market or "").strip().lower()
+    if not market:
+        return stock_codes
+
+    from src.core.trading_calendar import get_market_for_stock
+
+    filtered = [
+        code
+        for code in stock_codes
+        if get_market_for_stock(code) == market
+    ]
+    skipped = [code for code in stock_codes if code not in filtered]
+    if skipped:
+        logger.info(
+            "stock-market=%s 已跳过其他市场股票: %s",
+            market,
+            ", ".join(skipped),
+        )
+    return filtered
+
+
 def _prime_daily_market_context(
     config: Config,
     pipeline: Any,
@@ -769,6 +802,16 @@ def run_full_analysis(
 
         # Issue #373: Trading day filter (per-stock, per-market)
         effective_codes = stock_codes if stock_codes is not None else config.stock_list
+        effective_codes = _filter_stock_codes_by_requested_market(
+            effective_codes,
+            getattr(args, "stock_market", None),
+        )
+        if getattr(args, "stock_market", None) and not effective_codes:
+            logger.warning(
+                "stock-market=%s 未匹配到任何股票，本轮跳过",
+                getattr(args, "stock_market", None),
+            )
+            return True
         filtered_codes, effective_region, should_skip = _compute_trading_day_filter(
             config, args, effective_codes
         )

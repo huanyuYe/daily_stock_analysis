@@ -4650,7 +4650,7 @@ _FIELD_HELP_METADATA: Dict[str, Dict[str, Any]] = {
     },
     "TICKFLOW_BATCH_SIZE": {
         "help_key": "settings.data_source.TICKFLOW_BATCH_SIZE",
-        "examples": ["TICKFLOW_BATCH_SIZE=100"],
+        "examples": ["TICKFLOW_BATCH_SIZE=5"],
         "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
     },
     "SERPAPI_API_KEYS": {

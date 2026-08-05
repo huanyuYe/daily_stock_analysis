@@ -617,7 +617,7 @@ class DataFetcherManager:
 
     _DAILY_MARKET_FETCHER_SUPPORT = {
         "EfinanceFetcher": {"cn"},
-        "TencentFetcher": {"cn"},
+        "TencentFetcher": {"cn", "hk", "us"},
         "AkshareFetcher": {"cn", "hk"},
         "TushareFetcher": {"cn", "hk"},
         "TickFlowFetcher": {"cn"},
@@ -891,7 +891,7 @@ class DataFetcherManager:
                     api_key=api_key,
                     kline_adjust=getattr(config, "tickflow_kline_adjust", "none"),
                     batch_daily_enabled=getattr(config, "tickflow_batch_daily_enabled", True),
-                    batch_size=getattr(config, "tickflow_batch_size", 100),
+                    batch_size=getattr(config, "tickflow_batch_size", 5),
                     priority=getattr(config, "tickflow_priority", 2),
                 )
                 self._tickflow_fetcher = fetcher
@@ -1188,7 +1188,7 @@ class DataFetcherManager:
                     api_key=tickflow_api_key,
                     kline_adjust=getattr(config, "tickflow_kline_adjust", "none"),
                     batch_daily_enabled=getattr(config, "tickflow_batch_daily_enabled", True),
-                    batch_size=getattr(config, "tickflow_batch_size", 100),
+                    batch_size=getattr(config, "tickflow_batch_size", 5),
                     priority=getattr(config, "tickflow_priority", 2),
                 )
             )
@@ -1304,17 +1304,17 @@ class DataFetcherManager:
             raise DataFetchError(error_summary)
 
         # 美股（含美股指数）使用专用路由；港股走下方通用数据源循环
-        # Failover chain: Finnhub(P2) -> AlphaVantage(P3) -> Yfinance(P4) -> Longbridge(P5)
-        # When Longbridge preferred: Longbridge -> Finnhub -> AlphaVantage -> Yfinance
+        # Failover chain: Finnhub(P2) -> AlphaVantage(P3) -> Tencent(P5) -> Yfinance(P4) -> Longbridge(P5)
+        # When Longbridge preferred: Longbridge -> Finnhub -> AlphaVantage -> Tencent -> Yfinance
         if is_us:
             prefer_lb = self._longbridge_preferred(capability="daily_data") and not is_us_index
             if is_us_index:
                 # 指数始终 YFinance 首选（Longbridge 不提供指数K线）
                 source_order = ["YfinanceFetcher", "FinnhubFetcher"]
             elif prefer_lb:
-                source_order = ["LongbridgeFetcher", "FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher"]
+                source_order = ["LongbridgeFetcher", "FinnhubFetcher", "AlphaVantageFetcher", "TencentFetcher", "YfinanceFetcher"]
             else:
-                source_order = ["FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher", "LongbridgeFetcher"]
+                source_order = ["FinnhubFetcher", "AlphaVantageFetcher", "TencentFetcher", "YfinanceFetcher", "LongbridgeFetcher"]
             market_label = "美股指数" if is_us_index else "美股"
 
             for order_index, src_name in enumerate(source_order):
@@ -1590,7 +1590,7 @@ class DataFetcherManager:
                         fetcher,
                         "prefetch_realtime_quotes",
                         stock_codes,
-                        batch_size=getattr(config, "tickflow_batch_size", 100),
+                        batch_size=getattr(config, "tickflow_batch_size", 5),
                     )
                     or 0
                 )
@@ -1805,6 +1805,9 @@ class DataFetcherManager:
                 logger.info(f"[实时行情] {market_label} {stock_code} 成功获取 (来源: {primary_src})")
             primary_quote = self._supplement_quote(
                 stock_code, primary_quote, secondary_src, **secondary_kw,
+            )
+            primary_quote = self._supplement_quote(
+                stock_code, primary_quote, "TencentFetcher",
             )
             # 美股个股（非指数）尝试从 Finnhub/AlphaVantage 补充缺失字段
             if is_us and not is_us_index and primary_quote is not None:

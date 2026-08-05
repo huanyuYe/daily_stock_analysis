@@ -108,7 +108,7 @@ class TickFlowFetcher(BaseFetcher):
             if batch_daily_enabled is None
             else bool(batch_daily_enabled)
         )
-        self.batch_size = max(1, int(batch_size)) if batch_size is not None else _parse_env_int("TICKFLOW_BATCH_SIZE", 100)
+        self.batch_size = max(1, int(batch_size)) if batch_size is not None else _parse_env_int("TICKFLOW_BATCH_SIZE", 5)
 
         self._client = None
         self._client_lock = RLock()

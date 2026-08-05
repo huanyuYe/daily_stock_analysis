@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [修复] 港股和美股行情在 Yahoo、AkShare 或 Tushare 限流/超时后可降级到腾讯直连的日线、最新报价和主要指数；美股日线先解析真实交易所后缀，避免短历史误判，并保留 provider 时间与来源
+- [改进] CLI 新增 `--stock-market` 市场隔离参数，使混合 `STOCK_LIST` 可供独立 A 股任务仅分析 `cn` 标的，避免港股误入 A 股聚合报告
+- [修复] TickFlow 默认批量大小从 100 收敛到接口上限 5，使 5 只以上 A 股的日线与实时预取按批次执行，不再整批失败后退化为逐股拉取
 - [新功能] 接入 SEC submissions、SEC companyfacts 与公共 HKEXnews 结构化发行人披露，保留官方来源、申报时间和验证状态并以 fail-open 方式进入分析上下文
 - [新功能] 增加 15 个默认禁用的精选 RSS 试点模板，并让个股资讯池可补充去重后的 global 行业证据
 - [改进] 本地资讯自动刷新支持关闭基础源自动补齐，以便将生产 RSS 试点严格限制为显式启用的 12–15 个源

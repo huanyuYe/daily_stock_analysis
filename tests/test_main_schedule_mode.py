@@ -29,6 +29,15 @@ _MAIN_IMPORT_ENV_OVERRIDES = {
 }
 
 
+def test_stock_market_filter_isolates_mixed_watchlist_without_mutating_input() -> None:
+    stock_codes = ["600519", "hk00700", "AAPL"]
+
+    assert main._filter_stock_codes_by_requested_market(stock_codes, "cn") == ["600519"]
+    assert main._filter_stock_codes_by_requested_market(stock_codes, "hk") == ["hk00700"]
+    assert main._filter_stock_codes_by_requested_market(stock_codes, "us") == ["AAPL"]
+    assert main._filter_stock_codes_by_requested_market(stock_codes, None) is stock_codes
+
+
 def _api_app_stub_modules():
     """sys.modules entries so ``start_api_server`` can ``from api.app import app``
     without importing the real (heavy) app tree in these isolated unit tests.
