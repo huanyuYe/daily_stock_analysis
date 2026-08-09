@@ -890,6 +890,15 @@ class AgentExecutor:
             if market_structure_section:
                 parts.append(market_structure_section)
 
+            from src.services.earnings_options_service import format_earnings_options_prompt_section
+
+            earnings_options_section = format_earnings_options_prompt_section(
+                context.get("earnings_options_context"),
+                report_language=report_language,
+            )
+            if earnings_options_section:
+                parts.append(earnings_options_section)
+
             analysis_context_pack_summary = context.get("analysis_context_pack_summary")
             if isinstance(analysis_context_pack_summary, str) and analysis_context_pack_summary:
                 parts.append(analysis_context_pack_summary)

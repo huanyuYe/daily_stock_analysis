@@ -41,6 +41,7 @@ from src.schemas.decision_action import (
     display_operation_advice_for_result,
     localize_action_label,
 )
+from src.services.earnings_options_service import build_earnings_options_report_view
 from src.utils.data_processing import (
     compact_phase_data_limitations,
     format_signal_attribution_weights_line,
@@ -168,6 +169,10 @@ def render(
             "stock_name": _escape_md(rn),
             "localized_operation_advice": display_advice,
             "localized_trend_prediction": localize_trend_prediction(r.trend_prediction, report_language),
+            "earnings_options": build_earnings_options_report_view(
+                getattr(r, "earnings_options_context", None),
+                report_language=report_language,
+            ),
         })
 
     display_buckets = [

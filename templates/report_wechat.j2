@@ -20,6 +20,22 @@
 
 ### {{ e.signal_emoji }} **{{ e.signal_text }}** | {{ e.stock_name }}({{ result.code }})
 
+{% if e.earnings_options %}
+{% set eo = e.earnings_options %}
+{% set eol = eo.labels %}
+🧾 **{{ eo.title }}**
+- {{ eol.earnings }} {{ eo.earnings_date or 'N/A' }}, {{ eol.expiry }} {{ eo.expiry_date or 'N/A' }}, gap {{ eo.expiry_gap_days if eo.expiry_gap_days is not none else 'N/A' }}d
+{% if eo.earnings_estimates %}- {{ eol.earnings_estimates }}: EPS avg {{ eo.earnings_estimates.get('eps_average', 'N/A') }}, revenue avg {{ eo.earnings_estimates.get('revenue_average', 'N/A') }}{% endif %}
+- {{ eol.underlying_move }} {{ eo.underlying_price or 'N/A' }} / {{ eo.underlying_change_pct if eo.underlying_change_pct is not none else 'N/A' }}%; {{ eol.call_put_volume }} {{ eo.call_volume }}/{{ eo.put_volume }}
+{% if eo.is_earnings_adjacent %}⚠️ {{ eol.adjacent_warning }}{% endif %}
+{% for item in eo.candidates[:3] %}
+- {{ item.option_type|upper }} K={{ item.strike }}, premium {{ item.premium }}, PoP {{ '%.1f%%'|format(item.profit_probability * 100) }}, 1σ net/contract {{ item.one_sigma_net_profit_per_contract }}, volume/OI {{ item.volume }}/{{ item.open_interest }}
+{% endfor %}
+{% if eo.unusual_activity %}**{{ eol.unusual }}:** {{ eo.unusual_activity[0].option_type|upper }} {{ eo.unusual_activity[0].contract_symbol }}, volume/OI {{ eo.unusual_activity[0].volume_open_interest_ratio }}, last trade {{ eo.unusual_activity[0].last_trade_at or 'N/A' }}{% endif %}
+*{{ eol.source_note }} Source: {{ eo.source_id }}; as of {{ eo.as_of }}.*
+
+{% endif %}
+
 {% set one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary %}
 {% if one_sentence %}
 📌 **{{ one_sentence[:80] }}**

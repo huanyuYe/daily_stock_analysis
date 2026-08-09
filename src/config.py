@@ -999,6 +999,12 @@ class Config:
     sec_edgar_user_agent: str = (
         "daily-stock-analysis contact=https://github.com/ZhuLinsen/daily_stock_analysis"
     )
+    # === US earnings and near-expiry options (yfinance, fail-open) ===
+    earnings_options_enabled: bool = True
+    earnings_options_lookahead_days: int = 45
+    earnings_options_event_window_days: int = 3
+    earnings_options_profit_probability_threshold: float = 0.50
+    earnings_options_fetch_timeout_sec: float = 8.0
     bias_threshold: float = 5.0  # 乖离率阈值（%），超过此值提示不追高
 
     # === Agent 模式配置 ===
@@ -1923,6 +1929,38 @@ class Config:
             sec_edgar_user_agent=(
                 (os.getenv('SEC_EDGAR_USER_AGENT') or '').strip()
                 or 'daily-stock-analysis contact=https://github.com/ZhuLinsen/daily_stock_analysis'
+            ),
+            earnings_options_enabled=parse_env_bool(
+                os.getenv('EARNINGS_OPTIONS_ENABLED'),
+                True,
+            ),
+            earnings_options_lookahead_days=parse_env_int(
+                os.getenv('EARNINGS_OPTIONS_LOOKAHEAD_DAYS'),
+                45,
+                field_name='EARNINGS_OPTIONS_LOOKAHEAD_DAYS',
+                minimum=1,
+                maximum=180,
+            ),
+            earnings_options_event_window_days=parse_env_int(
+                os.getenv('EARNINGS_OPTIONS_EVENT_WINDOW_DAYS'),
+                3,
+                field_name='EARNINGS_OPTIONS_EVENT_WINDOW_DAYS',
+                minimum=0,
+                maximum=14,
+            ),
+            earnings_options_profit_probability_threshold=parse_env_float(
+                os.getenv('EARNINGS_OPTIONS_PROFIT_PROBABILITY_THRESHOLD'),
+                0.50,
+                field_name='EARNINGS_OPTIONS_PROFIT_PROBABILITY_THRESHOLD',
+                minimum=0.01,
+                maximum=0.99,
+            ),
+            earnings_options_fetch_timeout_sec=parse_env_float(
+                os.getenv('EARNINGS_OPTIONS_FETCH_TIMEOUT_SEC'),
+                8.0,
+                field_name='EARNINGS_OPTIONS_FETCH_TIMEOUT_SEC',
+                minimum=1.0,
+                maximum=30.0,
             ),
             bias_threshold=parse_env_float(os.getenv('BIAS_THRESHOLD'), 5.0, field_name='BIAS_THRESHOLD', minimum=1.0),
             agent_backend=(os.getenv('AGENT_BACKEND', 'auto') or 'auto').strip().lower(),

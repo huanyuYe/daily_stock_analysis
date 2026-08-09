@@ -61,6 +61,7 @@ from src.schemas.decision_action import (
     display_decision_type_for_result,
     display_operation_advice_for_result,
 )
+from src.services.earnings_options_service import build_earnings_options_report_view
 from bot.models import BotMessage
 from src.utils.sanitize import sanitize_diagnostic_text
 from src.formatters import strip_hidden_markdown_metadata
@@ -1181,6 +1182,84 @@ class NotificationService(
         if data_limitations["status_line"] or data_limitations["details"]:
             report_lines.append("")
 
+    @staticmethod
+    def _append_earnings_options_block(
+        report_lines: List[str],
+        result: AnalysisResult,
+        report_language: str,
+        *,
+        compact: bool = False,
+    ) -> None:
+        view = build_earnings_options_report_view(
+            getattr(result, "earnings_options_context", None),
+            report_language=report_language,
+        )
+        if not view:
+            return
+
+        if report_language == "en":
+            earnings_label, expiry_label = "Earnings", "Expiry"
+            underlying_label, flow_label = "Underlying", "Call/Put volume"
+            adjacent_warning = "Earnings is adjacent to expiry: focus on gap risk, IV crush, theta, and liquidity."
+            candidate_label = "Model-estimated PoP above threshold"
+            source_note = "Single-source aggregator data; PoP is not a historical win rate or return guarantee."
+        elif report_language == "ko":
+            earnings_label, expiry_label = "실적 발표일", "만기일"
+            underlying_label, flow_label = "기초자산", "Call/Put 거래량"
+            adjacent_warning = "실적 발표일과 만기일이 인접합니다. 갭, IV crush, 시간가치와 유동성을 중점 점검하세요."
+            candidate_label = "모형 추정 PoP 기준 초과 계약"
+            source_note = "단일 집계 소스이며 PoP는 과거 승률 또는 수익 보장이 아닙니다."
+        else:
+            earnings_label, expiry_label = "财报日", "到期日"
+            underlying_label, flow_label = "正股", "Call/Put 成交量"
+            adjacent_warning = "财报日与到期日相邻：重点关注跳空、IV crush、时间价值衰减与流动性。"
+            candidate_label = "模型估算 PoP 超过阈值的合约"
+            source_note = "聚合单源数据；PoP 不是历史胜率或收益保证。"
+
+        report_lines.extend([
+            f"### 🧾 {view['title']}",
+            f"- {earnings_label}: {view.get('earnings_date') or 'N/A'} | "
+            f"{expiry_label}: {view.get('expiry_date') or 'N/A'} "
+            f"(gap {view.get('expiry_gap_days') if view.get('expiry_gap_days') is not None else 'N/A'}d)",
+            f"- {underlying_label}: {view.get('underlying_price') or 'N/A'} / "
+            f"{view.get('underlying_change_pct') if view.get('underlying_change_pct') is not None else 'N/A'}% | "
+            f"{flow_label}: {view.get('call_volume', 0)}/{view.get('put_volume', 0)} | "
+            f"Put/Call: {view.get('put_call_ratio') or 'N/A'}",
+        ])
+        if view.get("is_earnings_adjacent"):
+            report_lines.append(f"⚠️ {adjacent_warning}")
+        candidates = view.get("candidates") or []
+        if candidates:
+            report_lines.append(f"**{candidate_label}:**")
+            for item in candidates[: 2 if compact else 5]:
+                report_lines.append(
+                    f"- {str(item.get('option_type') or '').upper()} K={item.get('strike')} "
+                    f"premium={item.get('premium')} max_loss/contract={item.get('max_loss_per_contract')} "
+                    f"BE={item.get('breakeven')} PoP={float(item.get('profit_probability') or 0):.1%} "
+                    f"1sigma_net/contract={item.get('one_sigma_net_profit_per_contract')} "
+                    f"1sigma_return={item.get('one_sigma_return_pct')}% "
+                    f"volume/OI={item.get('volume')}/{item.get('open_interest')}"
+                )
+        unusual_activity = view.get("unusual_activity") or []
+        if unusual_activity:
+            unusual_label = (
+                "Recent unusual options activity"
+                if report_language == "en"
+                else ("최근 비정상 옵션 활동" if report_language == "ko" else "最近异常期权行为")
+            )
+            report_lines.append(f"**{unusual_label}:**")
+            for item in unusual_activity[: 1 if compact else 3]:
+                report_lines.append(
+                    f"- {str(item.get('option_type') or '').upper()} {item.get('contract_symbol')} "
+                    f"volume/OI ratio={item.get('volume_open_interest_ratio')} "
+                    f"volume={item.get('volume')} IV={item.get('implied_volatility')} "
+                    f"last_trade={item.get('last_trade_at') or 'N/A'}"
+                )
+        report_lines.extend([
+            f"*{source_note} Source: {view.get('source_id')}; as of {view.get('as_of')}.*",
+            "",
+        ])
+
     def _get_display_operation_advice(
         self,
         result: AnalysisResult,
@@ -1333,6 +1412,11 @@ class NotificationService(
                     f"## {signal_emoji} {stock_name} ({result.code})",
                     "",
                 ])
+                self._append_earnings_options_block(
+                    report_lines,
+                    result,
+                    report_language,
+                )
                 # ========== 舆情与基本面概览（放在最前面）==========
                 intel = dashboard.get('intelligence', {}) if dashboard else {}
                 if intel:
@@ -1665,6 +1749,12 @@ class NotificationService(
                 # 标题行：信号等级 + 股票名称
                 lines.append(f"### {signal_emoji} **{signal_text}** | {stock_name}({result.code})")
                 lines.append("")
+                self._append_earnings_options_block(
+                    lines,
+                    result,
+                    report_language,
+                    compact=True,
+                )
 
                 # 核心决策（一句话）
                 one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary
@@ -1908,6 +1998,16 @@ class NotificationService(
                 f"{signal_text} | "
                 f"{labels['score_label']} {r.sentiment_score} | {one}"
             )
+            view = build_earnings_options_report_view(
+                getattr(r, "earnings_options_context", None),
+                report_language=report_language,
+            )
+            if view:
+                lines.append(
+                    f"🧾 {view['title']}: earnings {view.get('earnings_date') or 'N/A'} / "
+                    f"expiry {view.get('expiry_date') or 'N/A'} / "
+                    f"Call-Put volume {view.get('call_volume', 0)}-{view.get('put_volume', 0)}"
+                )
         lines.append("")
         lines.append(f"*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
         models = self._collect_models_used(results)
@@ -1951,6 +2051,12 @@ class NotificationService(
             lines.extend([excerpt, ""])
 
         self._append_market_snapshot(lines, result)
+        self._append_earnings_options_block(
+            lines,
+            result,
+            report_language,
+            compact=True,
+        )
 
         # 核心决策（一句话）
         one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary

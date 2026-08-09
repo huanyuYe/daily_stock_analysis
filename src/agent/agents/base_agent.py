@@ -215,6 +215,16 @@ class BaseAgent(ABC):
         analysis_context_pack_summary = ctx.meta.get("analysis_context_pack_summary")
         if isinstance(analysis_context_pack_summary, str) and analysis_context_pack_summary:
             messages.append({"role": "user", "content": analysis_context_pack_summary})
+        earnings_options_context = ctx.meta.get("earnings_options_context")
+        if isinstance(earnings_options_context, dict):
+            from src.services.earnings_options_service import format_earnings_options_prompt_section
+
+            earnings_options_section = format_earnings_options_prompt_section(
+                earnings_options_context,
+                report_language=ctx.meta.get("report_language", "zh"),
+            )
+            if earnings_options_section:
+                messages.append({"role": "user", "content": earnings_options_section})
 
         # Inject pre-fetched data as a synthetic assistant context
         cached_data = self._inject_cached_data(ctx)

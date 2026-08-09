@@ -77,6 +77,7 @@ from src.services.regulatory_disclosure_service import (
     RegulatoryDisclosureBundle,
     RegulatoryDisclosureService,
 )
+from src.services.earnings_options_service import EarningsOptionsService
 from src.services.analysis_context_builder import (
     AnalysisContextBuilder,
     PipelineAnalysisArtifacts,
@@ -302,6 +303,17 @@ class StockAnalysisPipeline:
         self.stock_event_service = AShareStockEventService(config=self.config)
         self.regulatory_disclosure_service = RegulatoryDisclosureService(
             config=self.config,
+        )
+        self.earnings_options_service = EarningsOptionsService(
+            enabled=getattr(self.config, "earnings_options_enabled", True),
+            lookahead_days=getattr(self.config, "earnings_options_lookahead_days", 45),
+            earnings_window_days=getattr(self.config, "earnings_options_event_window_days", 3),
+            profit_probability_threshold=getattr(
+                self.config,
+                "earnings_options_profit_probability_threshold",
+                0.50,
+            ),
+            timeout_seconds=getattr(self.config, "earnings_options_fetch_timeout_sec", 8.0),
         )
         
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
@@ -563,6 +575,11 @@ class StockAnalysisPipeline:
                 trade_date=daily_market_target_date,
                 market_phase_summary=market_phase_summary,
             )
+            earnings_options_context = self._fetch_earnings_options_context(
+                code=code,
+                realtime_quote=realtime_quote,
+                market_phase_context=market_phase_context_dict,
+            )
 
             # P0: write-only snapshot, fail-open, no read dependency on this table.
             try:
@@ -613,6 +630,7 @@ class StockAnalysisPipeline:
                     daily_market_context=daily_market_context,
                     portfolio_context=portfolio_context,
                     market_structure_context=market_structure_context,
+                    earnings_options_context=earnings_options_context,
                 )
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
@@ -758,6 +776,8 @@ class StockAnalysisPipeline:
                 enhanced_context["portfolio_context"] = dict(portfolio_context)
             if isinstance(market_structure_context, dict):
                 enhanced_context["market_structure_context"] = market_structure_context
+            if isinstance(earnings_options_context, dict):
+                enhanced_context["earnings_options_context"] = earnings_options_context
             
             # Step 7: 调用 AI 分析（传入增强的上下文和新闻）
             (
@@ -880,6 +900,8 @@ class StockAnalysisPipeline:
                     result.fundamental_context = fundamental_context
                 if isinstance(market_structure_context, dict):
                     result.market_structure_context = market_structure_context
+                if isinstance(earnings_options_context, dict):
+                    result.earnings_options_context = earnings_options_context
                 result.market_phase_summary = market_phase_summary
                 result.analysis_context_pack_overview = analysis_context_pack_overview
                 if align_signal_attribution_with_data_quality(
@@ -1371,6 +1393,35 @@ class StockAnalysisPipeline:
             )
             return None
 
+    def _fetch_earnings_options_context(
+        self,
+        *,
+        code: str,
+        realtime_quote: Any,
+        market_phase_context: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch US earnings/options context without blocking the main pipeline."""
+        service = getattr(self, "earnings_options_service", None)
+        if service is None or not is_us_stock_code(code):
+            return None
+        try:
+            context = service.analyze(
+                code,
+                realtime_quote=realtime_quote,
+                market_phase_context=market_phase_context,
+            )
+        except Exception as exc:
+            logger.warning("[%s] earnings/options analysis failed (fail-open): %s", code, exc)
+            return {"status": "failed", "symbol": code, "error": type(exc).__name__, "fail_open": True}
+        if context.get("status") not in {"ok", "disabled", "unsupported"}:
+            logger.info(
+                "[earnings_options] symbol=%s status=%s warning=%s",
+                code,
+                context.get("status"),
+                context.get("error") or context.get("warnings"),
+            )
+        return context
+
     def _ensure_agent_history(self, code: str, min_days: int = 240) -> None:
         """Ensure at least *min_days* of K-line history is in DB for agent tools."""
         from src.services.history_loader import get_frozen_target_date
@@ -1407,6 +1458,7 @@ class StockAnalysisPipeline:
         daily_market_context: Optional[DailyMarketContext] = None,
         portfolio_context: Optional[Dict[str, Any]] = None,
         market_structure_context: Optional[Dict[str, Any]] = None,
+        earnings_options_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """
         使用 Agent 模式分析单只股票。
@@ -1439,6 +1491,8 @@ class StockAnalysisPipeline:
                 initial_context["market_phase_context"] = market_phase_context
             if isinstance(market_structure_context, dict):
                 initial_context["market_structure_context"] = market_structure_context
+            if isinstance(earnings_options_context, dict):
+                initial_context["earnings_options_context"] = earnings_options_context
             self._attach_daily_market_context(
                 initial_context,
                 daily_market_context,
@@ -1737,6 +1791,8 @@ class StockAnalysisPipeline:
                     result.fundamental_context = fundamental_context
                 if isinstance(market_structure_context, dict):
                     result.market_structure_context = market_structure_context
+                if isinstance(earnings_options_context, dict):
+                    result.earnings_options_context = earnings_options_context
                 result.market_phase_summary = market_phase_summary
                 result.analysis_context_pack_overview = analysis_context_pack_overview
                 if align_signal_attribution_with_data_quality(

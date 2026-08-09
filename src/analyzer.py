@@ -1734,9 +1734,10 @@ class AnalysisResult:
     # ========== 历史对比（Report Engine P0）==========
     query_id: Optional[str] = None  # 本次分析 query_id，用于历史对比时排除本次记录
 
-    # ========== 基本面上下文（仅运行时，用于通知拼装；不持久化到 to_dict）==========
+    # ========== 结构化补充上下文（用于通知拼装；仅 fundamental_context 不进入 to_dict）==========
     fundamental_context: Optional[Dict[str, Any]] = None
     market_structure_context: Optional[Dict[str, Any]] = None
+    earnings_options_context: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -1777,6 +1778,7 @@ class AnalysisResult:
             'change_pct': self.change_pct,
             'model_used': self.model_used,
             'market_structure_context': self.market_structure_context,
+            'earnings_options_context': self.earnings_options_context,
         }
 
     def get_core_conclusion(self) -> str:
@@ -3762,6 +3764,14 @@ class GeminiAnalyzer:
         )
         if market_structure_section:
             prompt += market_structure_section
+        from src.services.earnings_options_service import format_earnings_options_prompt_section
+
+        earnings_options_section = format_earnings_options_prompt_section(
+            context.get("earnings_options_context"),
+            report_language=report_language,
+        )
+        if earnings_options_section:
+            prompt += earnings_options_section
         if isinstance(analysis_context_pack_summary, str) and analysis_context_pack_summary:
             prompt += analysis_context_pack_summary
         prompt += f"""

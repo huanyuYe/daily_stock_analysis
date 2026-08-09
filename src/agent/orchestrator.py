@@ -1168,10 +1168,14 @@ class AgentOrchestrator:
             analysis_context_pack_summary = context.get("analysis_context_pack_summary")
             if isinstance(analysis_context_pack_summary, str) and analysis_context_pack_summary:
                 ctx.meta["analysis_context_pack_summary"] = analysis_context_pack_summary
+            earnings_options_context = context.get("earnings_options_context")
+            if isinstance(earnings_options_context, dict) and earnings_options_context:
+                ctx.meta["earnings_options_context"] = dict(earnings_options_context)
 
             # Pre-populate data fields that the caller already has
             for data_key in ("realtime_quote", "daily_history", "chip_distribution",
-                             "trend_result", "news_context", "stock_events"):
+                             "trend_result", "news_context", "stock_events",
+                             "earnings_options_context"):
                 if context.get(data_key):
                     ctx.set_data(data_key, context[data_key])
 

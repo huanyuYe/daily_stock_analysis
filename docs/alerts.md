@@ -327,7 +327,7 @@ portfolio diagnostics 必含 `account_id`（或 `all`）、`currency`、`as_of`�
 P6 不做：
 
 - 不做 P7 Market Light。
-- 不做财报日前、分红除权日前提醒；这类规则需要稳定日期契约后另起 follow-up。
+- 不新增独立的财报日前或分红除权日前 `alert_rule`。美股个股分析现已在盘前、盘中、盘后报告中提供财报日与邻近到期期权重点区块，但它属于分析报告提醒，不会单独创建告警触发记录。
 - 不做 sector 级集中度告警；P6 集中度使用 symbol 维度 `top_weight_pct`。
 - 不做跨规则同标的通知合并、分钟线、多市场时区精确判定或 legacy JSON 扩展。
 

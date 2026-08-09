@@ -24,6 +24,39 @@
 
 ## {{ e.signal_emoji }} {{ e.stock_name }} ({{ result.code }})
 
+{% if e.earnings_options %}
+{% set eo = e.earnings_options %}
+{% set eol = eo.labels %}
+### 🧾 {{ eo.title }}
+
+| {{ eol.earnings }} | {{ eol.expiry }} | {{ eol.underlying_move }} | {{ eol.call_put_volume }} | Put/Call |
+|---------|---------|---------|---------|---------|
+| {{ eo.earnings_date or 'N/A' }} ({{ eo.days_until_earnings if eo.days_until_earnings is not none else 'N/A' }}天) | {{ eo.expiry_date or 'N/A' }} (相差{{ eo.expiry_gap_days if eo.expiry_gap_days is not none else 'N/A' }}天) | {{ eo.underlying_price or 'N/A' }} / {{ eo.underlying_change_pct if eo.underlying_change_pct is not none else 'N/A' }}% | {{ eo.call_volume }}/{{ eo.put_volume }} | {{ eo.put_call_ratio or 'N/A' }} |
+
+{% if eo.earnings_estimates %}
+**{{ eol.earnings_estimates }}:** EPS avg {{ eo.earnings_estimates.get('eps_average', 'N/A') }} ({{ eo.earnings_estimates.get('eps_low', 'N/A') }}–{{ eo.earnings_estimates.get('eps_high', 'N/A') }}), revenue avg {{ eo.earnings_estimates.get('revenue_average', 'N/A') }}
+{% endif %}
+
+{% if eo.is_earnings_adjacent %}
+> ⚠️ {{ eol.adjacent_warning }}
+{% endif %}
+{% if eo.candidates %}
+**{{ eol.candidates }}:**
+{% for item in eo.candidates %}
+- {{ item.option_type|upper }} {{ item.contract_symbol }} K={{ item.strike }}: premium {{ item.premium }}, max loss/contract {{ item.max_loss_per_contract }}, BE {{ item.breakeven }}, PoP {{ '%.1f%%'|format(item.profit_probability * 100) }}, 1σ net/contract {{ item.one_sigma_net_profit_per_contract }} ({{ item.one_sigma_return_pct }}%), volume/OI {{ item.volume }}/{{ item.open_interest }}
+{% endfor %}
+{% endif %}
+{% if eo.unusual_activity %}
+**{{ eol.unusual }}:**
+{% for item in eo.unusual_activity %}
+- {{ item.option_type|upper }} {{ item.contract_symbol }}: volume/OI {{ item.volume_open_interest_ratio }}, volume {{ item.volume }}, IV {{ item.implied_volatility }}, last trade {{ item.last_trade_at or 'N/A' }}
+{% endfor %}
+{% endif %}
+
+*{{ eol.source_note }} Source: {{ eo.source_id }}; as of {{ eo.as_of }}.*
+
+{% endif %}
+
 {% if intel %}
 ### 📰 {{ labels.info_heading }}
 

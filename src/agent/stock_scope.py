@@ -22,6 +22,7 @@ SWITCH_CLEANUP_KEYS = {
     "stock_events",
     "fundamental_context",
     "market_structure_context",
+    "earnings_options_context",
     "analysis_context_pack_summary",
     "market_phase_context",
 }
