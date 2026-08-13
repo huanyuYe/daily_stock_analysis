@@ -994,8 +994,15 @@ class Config:
     news_intel_auto_fetch_enabled: bool = False  # 是否在分析前自动初始化并拉取本地资讯源
     news_intel_auto_bootstrap_defaults: bool = True  # 自动刷新时是否补齐基础内置源
     newsnow_base_url: str = "https://newsnow.busiyi.world"  # NewsNow HTTP API base URL (数据源侧，不影响 LLM/provider base URL)
+    cross_market_theme_config_path: str = ""  # 空值使用仓库内置主题目录
+    cross_market_theme_news_window_hours: int = 36
+    cross_market_theme_proxy_request_interval_sec: float = 0.25
+    cross_market_theme_max_news_per_theme: int = 2
     regulatory_disclosures_enabled: bool = True  # SEC/HKEXnews 官方披露元数据
     regulatory_fetch_timeout_sec: float = 8.0
+    regulatory_retry_max: int = 2
+    regulatory_sec_request_min_interval_sec: float = 0.35
+    regulatory_hkex_request_min_interval_sec: float = 1.0
     sec_edgar_user_agent: str = (
         "daily-stock-analysis contact=https://github.com/ZhuLinsen/daily_stock_analysis"
     )
@@ -1005,6 +1012,10 @@ class Config:
     earnings_options_event_window_days: int = 3
     earnings_options_profit_probability_threshold: float = 0.50
     earnings_options_fetch_timeout_sec: float = 8.0
+    earnings_options_request_min_interval_sec: float = 2.0
+    earnings_options_rate_limit_cooldown_sec: int = 90
+    earnings_options_last_good_ttl_sec: int = 6 * 60 * 60
+    earnings_options_futu_fallback_enabled: bool = False
     bias_threshold: float = 5.0  # 乖离率阈值（%），超过此值提示不追高
 
     # === Agent 模式配置 ===
@@ -1915,6 +1926,30 @@ class Config:
                 True,
             ),
             newsnow_base_url=((os.getenv('NEWSNOW_BASE_URL') or '').strip().rstrip('/') or 'https://newsnow.busiyi.world'),
+            cross_market_theme_config_path=(
+                os.getenv('CROSS_MARKET_THEME_CONFIG_PATH') or ''
+            ).strip(),
+            cross_market_theme_news_window_hours=parse_env_int(
+                os.getenv('CROSS_MARKET_THEME_NEWS_WINDOW_HOURS'),
+                36,
+                field_name='CROSS_MARKET_THEME_NEWS_WINDOW_HOURS',
+                minimum=6,
+                maximum=168,
+            ),
+            cross_market_theme_proxy_request_interval_sec=parse_env_float(
+                os.getenv('CROSS_MARKET_THEME_PROXY_REQUEST_INTERVAL_SEC'),
+                0.25,
+                field_name='CROSS_MARKET_THEME_PROXY_REQUEST_INTERVAL_SEC',
+                minimum=0.0,
+                maximum=10.0,
+            ),
+            cross_market_theme_max_news_per_theme=parse_env_int(
+                os.getenv('CROSS_MARKET_THEME_MAX_NEWS_PER_THEME'),
+                2,
+                field_name='CROSS_MARKET_THEME_MAX_NEWS_PER_THEME',
+                minimum=1,
+                maximum=5,
+            ),
             regulatory_disclosures_enabled=parse_env_bool(
                 os.getenv('REGULATORY_DISCLOSURES_ENABLED'),
                 True,
@@ -1925,6 +1960,27 @@ class Config:
                 field_name='REGULATORY_FETCH_TIMEOUT_SEC',
                 minimum=1.0,
                 maximum=30.0,
+            ),
+            regulatory_retry_max=parse_env_int(
+                os.getenv('REGULATORY_RETRY_MAX'),
+                2,
+                field_name='REGULATORY_RETRY_MAX',
+                minimum=1,
+                maximum=3,
+            ),
+            regulatory_sec_request_min_interval_sec=parse_env_float(
+                os.getenv('REGULATORY_SEC_REQUEST_MIN_INTERVAL_SEC'),
+                0.35,
+                field_name='REGULATORY_SEC_REQUEST_MIN_INTERVAL_SEC',
+                minimum=0.0,
+                maximum=10.0,
+            ),
+            regulatory_hkex_request_min_interval_sec=parse_env_float(
+                os.getenv('REGULATORY_HKEX_REQUEST_MIN_INTERVAL_SEC'),
+                1.0,
+                field_name='REGULATORY_HKEX_REQUEST_MIN_INTERVAL_SEC',
+                minimum=0.0,
+                maximum=10.0,
             ),
             sec_edgar_user_agent=(
                 (os.getenv('SEC_EDGAR_USER_AGENT') or '').strip()
@@ -1961,6 +2017,31 @@ class Config:
                 field_name='EARNINGS_OPTIONS_FETCH_TIMEOUT_SEC',
                 minimum=1.0,
                 maximum=30.0,
+            ),
+            earnings_options_request_min_interval_sec=parse_env_float(
+                os.getenv('EARNINGS_OPTIONS_REQUEST_MIN_INTERVAL_SEC'),
+                2.0,
+                field_name='EARNINGS_OPTIONS_REQUEST_MIN_INTERVAL_SEC',
+                minimum=0.0,
+                maximum=30.0,
+            ),
+            earnings_options_rate_limit_cooldown_sec=parse_env_int(
+                os.getenv('EARNINGS_OPTIONS_RATE_LIMIT_COOLDOWN_SEC'),
+                90,
+                field_name='EARNINGS_OPTIONS_RATE_LIMIT_COOLDOWN_SEC',
+                minimum=0,
+                maximum=1800,
+            ),
+            earnings_options_last_good_ttl_sec=parse_env_int(
+                os.getenv('EARNINGS_OPTIONS_LAST_GOOD_TTL_SEC'),
+                6 * 60 * 60,
+                field_name='EARNINGS_OPTIONS_LAST_GOOD_TTL_SEC',
+                minimum=60,
+                maximum=7 * 24 * 60 * 60,
+            ),
+            earnings_options_futu_fallback_enabled=parse_env_bool(
+                os.getenv('EARNINGS_OPTIONS_FUTU_FALLBACK_ENABLED'),
+                False,
             ),
             bias_threshold=parse_env_float(os.getenv('BIAS_THRESHOLD'), 5.0, field_name='BIAS_THRESHOLD', minimum=1.0),
             agent_backend=(os.getenv('AGENT_BACKEND', 'auto') or 'auto').strip().lower(),
@@ -3158,6 +3239,18 @@ class Config:
                 severity="info",
                 message="未配置 Tushare Token，将使用其他数据源",
                 field="TUSHARE_TOKEN",
+            ))
+        if self.regulatory_disclosures_enabled and "@" not in str(
+            self.sec_edgar_user_agent or ""
+        ):
+            issues.append(ConfigIssue(
+                severity="warning",
+                message=(
+                    "SEC_EDGAR_USER_AGENT 未包含可联系邮箱；SEC Fair Access 可能返回 403，"
+                    "请配置为组织或应用名称加真实联系邮箱。"
+                ),
+                field="SEC_EDGAR_USER_AGENT",
+                code="sec_user_agent_contact_missing",
             ))
 
         # --- Generation backend selection ---

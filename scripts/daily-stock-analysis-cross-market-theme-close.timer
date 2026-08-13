@@ -1,0 +1,10 @@
+[Unit]
+Description=A/HK close validation cross-market theme report
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 16:50:00 Asia/Shanghai
+AccuracySec=1min
+Unit=daily-stock-analysis-cross-market-theme@close.service
+
+[Install]
+WantedBy=timers.target

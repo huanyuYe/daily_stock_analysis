@@ -106,6 +106,32 @@ def test_build_explanation_keeps_risk_and_pipeline_adjustments_distinct():
     }
 
 
+def test_build_explanation_accepts_action_plan_reconciliation_transition():
+    payload = build_pipeline_final_explanation(
+        runtime_facts=_facts(),
+        pipeline_start_signal="hold",
+        pipeline_start_action="hold",
+        final_action="watch",
+        pipeline_adjustments=(
+            PipelineActionAdjustment(
+                source="action_plan_reconciliation",
+                from_action="hold",
+                to_action="watch",
+            ),
+        ),
+    )
+
+    assert payload["final_adjustments"] == [
+        {
+            "source": "action_plan_reconciliation",
+            "from_action": "hold",
+            "to_action": "watch",
+        }
+    ]
+    assert payload["final_action"] == "watch"
+    assert payload["decision_path"] == "action_plan_reconciliation_adjusted"
+
+
 def test_build_explanation_uses_actual_risk_application_without_pipeline_relabeling():
     payload = build_pipeline_final_explanation(
         runtime_facts=_facts(),

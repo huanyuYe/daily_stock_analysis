@@ -160,3 +160,101 @@ def test_service_is_fail_open_for_disabled_or_non_us_symbols():
     disabled = EarningsOptionsService(enabled=False)
     assert disabled.analyze("OKLO")["status"] == "disabled"
     assert EarningsOptionsService().analyze("600519")["status"] == "unsupported"
+
+
+def test_service_uses_explicitly_marked_last_good_after_fresh_failure(tmp_path):
+    successful = EarningsOptionsService(
+        ticker_factory=lambda symbol: _Ticker(),
+        now_factory=lambda: datetime(2026, 8, 9, 10, 0, tzinfo=ZoneInfo("America/New_York")),
+        persistent_cache_dir=tmp_path,
+    )
+    assert successful.analyze("OKLO", realtime_quote={"price": 100.0})["status"] == "ok"
+
+    def fail(_symbol):
+        raise RuntimeError("Too Many Requests")
+
+    degraded = EarningsOptionsService(
+        ticker_factory=fail,
+        now_factory=lambda: datetime(2026, 8, 9, 10, 5, tzinfo=ZoneInfo("America/New_York")),
+        persistent_cache_dir=tmp_path,
+    ).analyze(
+        "OKLO",
+        realtime_quote={"price": 100.0},
+        market_phase_context={"phase": "intraday"},
+    )
+
+    assert degraded["status"] == "ok"
+    assert degraded["cache_status"] == "last_good"
+    assert degraded["stale"] is True
+    assert degraded["verification_status"] == "single_source_stale"
+    assert degraded["fresh_fetch_error"] == "RuntimeError"
+    assert "using_stale_last_good_after_fresh_fetch_failure" in degraded["warnings"]
+    assert degraded["market_phase_context"]["phase"] == "intraday"
+
+
+def test_service_uses_read_only_futu_option_snapshot_after_yahoo_failure():
+    def fail_yahoo(_symbol):
+        raise RuntimeError("Too Many Requests")
+
+    def load_futu(symbol, *, start, end, preferred_expiry):
+        assert symbol == "OKLO"
+        assert start.isoformat() == "2026-08-09"
+        assert end.isoformat() == "2026-09-07"
+        assert preferred_expiry is None
+        common = {
+            "last_price": 2.3,
+            "bid_price": 2.2,
+            "ask_price": 2.4,
+            "volume": 200,
+            "option_open_interest": 100,
+            "option_implied_volatility": 100.0,
+            "update_time": "2026-08-07 15:59:00",
+        }
+        return {
+            "expiry": "2026-08-14",
+            "contracts": [
+                {
+                    **common,
+                    "code": "US.OKLO260814C48000",
+                    "option_type": "CALL",
+                    "option_strike_price": 48.0,
+                },
+                {
+                    **common,
+                    "code": "US.OKLO260814P48500",
+                    "option_type": "PUT",
+                    "option_strike_price": 48.5,
+                },
+            ],
+        }
+
+    payload = EarningsOptionsService(
+        ticker_factory=fail_yahoo,
+        futu_fallback_enabled=True,
+        futu_snapshot_loader=load_futu,
+        profit_probability_threshold=0.10,
+        now_factory=lambda: datetime(2026, 8, 9, 10, 0, tzinfo=ZoneInfo("America/New_York")),
+    ).analyze(
+        "OKLO",
+        realtime_quote={"price": 48.42, "pre_close": 48.0},
+    )
+
+    assert payload["status"] == "ok"
+    assert payload["source_id"] == "futu_opend_options"
+    assert payload["source_tier"] == "broker_market_data"
+    assert payload["verification_status"] == "single_source_delayed"
+    assert payload["as_of"] == "2026-08-07T19:59:00+00:00"
+    assert payload["earnings"]["date"] is None
+    assert payload["expiry"]["date"] == "2026-08-14"
+    assert payload["activity"]["call_volume"] == 200
+    assert payload["activity"]["put_volume"] == 200
+    assert payload["activity"]["contracts_observed"] == 2
+    assert payload["high_probability_contracts"]
+    assert "earnings_calendar_unavailable_after_yahoo_failure" in payload["warnings"]
+    assert "yahoo_fresh_fetch_failed:RuntimeError" in payload["warnings"]
+    prompt = format_earnings_options_prompt_section(payload, report_language="zh")
+    assert "earnings gap=N/A" in prompt
+    assert "N/Ad" not in prompt
+    view = build_earnings_options_report_view(payload, report_language="zh")
+    assert view is not None
+    assert "Futu OpenD 只读延迟行情" in view["labels"]["source_note"]

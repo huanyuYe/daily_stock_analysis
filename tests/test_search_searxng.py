@@ -353,6 +353,54 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertIn("https://public-1.example/search", mock_get.call_args_list[1][0][0])
         self.assertIn("https://public-2.example/search", mock_get.call_args_list[2][0][0])
 
+    @patch.object(SearXNGSearchProvider, "_get_public_instances")
+    @patch("src.search_service.requests.get")
+    def test_public_mode_skips_instance_in_failure_cooldown(
+        self, mock_get, mock_public_instances
+    ):
+        first = "https://public-1.example"
+        second = "https://public-2.example"
+        mock_public_instances.return_value = [first, second]
+        SearXNGSearchProvider._penalized_instances[first] = float("inf")
+        mock_get.return_value = self._response(json_payload={"results": []})
+
+        response = self._create_provider(use_public_instances=True).search("query")
+
+        self.assertTrue(response.success)
+        self.assertEqual(mock_get.call_count, 1)
+        self.assertIn(f"{second}/search", mock_get.call_args[0][0])
+
+    @patch.object(SearXNGSearchProvider, "_get_public_instances")
+    @patch("src.search_service.requests.get")
+    def test_public_mode_fails_fast_when_every_instance_is_cooling_down(
+        self, mock_get, mock_public_instances
+    ):
+        instances = ["https://public-1.example", "https://public-2.example"]
+        mock_public_instances.return_value = instances
+        for instance in instances:
+            SearXNGSearchProvider._penalized_instances[instance] = float("inf")
+
+        response = self._create_provider(use_public_instances=True).search("query")
+
+        self.assertFalse(response.success)
+        self.assertIn("冷却", response.error_message or "")
+        mock_get.assert_not_called()
+
+    @patch("src.search_service.requests.get")
+    def test_public_rate_limit_penalizes_only_failed_instance(self, mock_get):
+        feed_urls = ["https://public-1.example/", "https://public-2.example/"]
+        mock_get.side_effect = [
+            self._response(json_payload=self._public_feed(feed_urls)),
+            self._response(status_code=429, text="Too Many Requests", headers={"content-type": "text/plain"}),
+            self._response(json_payload={"results": []}),
+        ]
+
+        response = self._create_provider(use_public_instances=True).search("query")
+
+        self.assertTrue(response.success)
+        self.assertIn("https://public-1.example", SearXNGSearchProvider._penalized_instances)
+        self.assertNotIn("https://public-2.example", SearXNGSearchProvider._penalized_instances)
+
     @patch("src.search_service.requests.get")
     def test_public_mode_returns_failure_when_feed_unavailable(self, mock_get):
         import requests as req_module

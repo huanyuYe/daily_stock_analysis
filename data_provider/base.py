@@ -2830,6 +2830,7 @@ class DataFetcherManager:
         stock_code: str,
         market: str,
         budget_seconds: Optional[float] = None,
+        realtime_quote: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """HK/US fundamental aggregation via yfinance.
 
@@ -2882,10 +2883,15 @@ class DataFetcherManager:
         }
         start_ts = time.time()
 
-        # Valuation: reuse realtime quote payload — yfinance returns pe/pb in the
-        # same shape as AkShare, so the existing block formatter still works.
+        # Valuation: reuse the caller's already-fetched quote when available.
+        # Re-fetching offshore quotes is especially expensive for HK because a
+        # whole-market AkShare fallback can consume tens of seconds per stock.
+        # The supplied quote has the same normalized pe/pb/market-cap contract,
+        # so reuse preserves fields while avoiding a duplicate provider chain.
         valuation_timeout = min(fetch_timeout, stage_timeout) if stage_timeout > 0 else 0
-        if valuation_timeout > 0:
+        if realtime_quote is not None:
+            quote_payload, valuation_err, valuation_ms = realtime_quote, None, 0
+        elif valuation_timeout > 0:
             quote_payload, valuation_err, valuation_ms = self._run_with_retry(
                 lambda: self.get_realtime_quote(stock_code),
                 valuation_timeout,
@@ -3141,6 +3147,7 @@ class DataFetcherManager:
                 stock_code,
                 market=market,
                 budget_seconds=budget_seconds,
+                realtime_quote=realtime_quote,
             )
 
         stage_timeout = float(

@@ -103,6 +103,36 @@ NEWS_INTEL_AUTO_FETCH_ENABLED=true
 
 这些来源是行业/公司/媒体证据，不等价于发行人法定披露；SEC 与 HKEXnews 的官方披露走独立的结构化监管链路，不能被 RSS 覆盖或替代。
 
+## 官方披露与财报期权的请求稳态
+
+定时报告会保留行情、K 线、官方披露和财报/期权的原有字段，不通过删减高权重数据来缩短耗时。SEC、HKEXnews 和 Yahoo 财报/期权使用各自的同主机串行门控；检测到 429 后进入短冷却，避免一个已超时的 SDK worker 与后续标的继续叠加请求。SEC/HKEXnews 的公开响应和完整财报/期权载荷会写入 `UPSTREAM_CACHE_DIR`，新鲜请求失败时允许读取 last-good 数据。已部署 Futu OpenD 且具备美股期权行情权限时，可显式开启 `EARNINGS_OPTIONS_FUTU_FALLBACK_ENABLED=true`：Yahoo 失败后改用只读 `get_option_chain` + `get_market_snapshot`，保留全到期合约的成交量、OI、买卖价和 IV，再执行同一成本/盈亏平衡/PoP 模型。Futu 路径不补造 Yahoo 财报日，财报日不可用时会显式告警。
+
+自动发现的公共 SearXNG 实例会在当前进程内记录失败冷却：429、访问验证/拒绝以及 5xx/超时实例分别暂停后续轮询，仍会继续尝试尚未失败的候选和其他已配置搜索源。全部公共实例均处于冷却时本轮快速失败并保留明确诊断，避免每个标的、每类检索重复等待同一批已知不可用端点；自建 SearXNG 不应用这一公共池策略。
+
+SEC 生产接入还应显式设置 `SEC_EDGAR_USER_AGENT` 为“组织或应用名称 + 可联系邮箱”。若该字段未包含联系邮箱，启动校验会告警；ticker 映射端点返回 403 后，同一进程会进入 30 分钟失败冷却，避免对报告中每个美股重复请求同一个被拒绝端点。冷却不伪造披露数据，报告继续标记官方源不可用；恢复高权重 SEC 数据仍需修正请求身份或合规出口。
+
+last-good 不是新鲜数据：报告载荷会保留原始 `as_of`，并增加 `stale`、`stale_age_seconds`、`cache_status`、`fresh_fetch_error` 或 `stale_last_good:*` 告警。调用方不得把带这些标记的数据描述为实时成功。默认配置为：
+
+```env
+REGULATORY_RETRY_MAX=2
+REGULATORY_SEC_REQUEST_MIN_INTERVAL_SEC=0.35
+REGULATORY_HKEX_REQUEST_MIN_INTERVAL_SEC=1.0
+SEC_EDGAR_USER_AGENT=daily-stock-analysis your-team@example.com
+EARNINGS_OPTIONS_REQUEST_MIN_INTERVAL_SEC=2.0
+EARNINGS_OPTIONS_RATE_LIMIT_COOLDOWN_SEC=90
+EARNINGS_OPTIONS_LAST_GOOD_TTL_SEC=21600
+EARNINGS_OPTIONS_FUTU_FALLBACK_ENABLED=false
+UPSTREAM_CACHE_DIR=data/cache/upstreams
+```
+
+增加单请求 timeout 只扩大慢请求等待上限，不会降低请求频率；调整成功率时应优先修改请求间隔、429 冷却和 last-good TTL。RSS 自动刷新仍按启用源顺序执行并写入本地资讯池，不由上述官方披露/期权缓存替代。
+
+A 股行业排行若收到 Tushare 明确的接口权限拒绝，会在当前分析进程内记住具体不可用接口，后续标的直接进入 efinance/AkShare 等既有 fallback；网络错误、超时和空数据不会被误判为永久权限限制。该优化只跳过当前套餐确定无法访问的重复调用，不降低成功数据的权重或字段。
+
+港股、美股等离岸市场的基本面估值会复用主流程已取得的标准化实时行情，避免同一标的重复触发整条行情 fallback；字段、来源标记和后续基本面数据源保持不变。
+
+腾讯主要指数接口可用于核验指数点位和涨跌，但没有提供可验证的指数货币成交额：港股指数字段会重复成交量，美股指数字段近似“指数点位 × 成交量”。大盘复盘对这类字段按缺失处理并显示 `N/A`，不会把合成量冒充港元或美元成交额；如需市场成交额，应接入具有明确单位契约的独立市场统计源。
+
 > 说明：该开关只有在实际执行进程环境变量中可见时才会生效。仓库默认随带的 `00-daily-analysis.yml` 为 `env` 采用 allowlist 映射策略，未显式列入映射时，即便在仓库 Variables/Secrets 中设置同名变量也不会注入运行环境，因此默认 workflow 中不会自动接收该开关。若要在仓库自带每日分析任务里开启该能力，请在 workflow 中显式添加该变量透传，或改为本地/Docker 直接配置环境变量运行。
 
 ## NewsNow 默认源

@@ -201,6 +201,12 @@ class TencentFetcher(BaseFetcher):
             current = safe_float(fields[3])
             if current is None or current <= 0:
                 continue
+            # Tencent's headline-index payload does not expose a verified
+            # monetary turnover field. For HK indices field 37 repeats volume;
+            # for US indices it is effectively index points multiplied by
+            # volume. Neither is cash turnover, so fail closed instead of
+            # rendering a precise-looking monetary value.
+            amount = None
             results.append(
                 {
                     "code": return_code,
@@ -213,7 +219,7 @@ class TencentFetcher(BaseFetcher):
                     "low": safe_float(fields[34]),
                     "prev_close": safe_float(fields[4]),
                     "volume": safe_float(fields[6]),
-                    "amount": safe_float(fields[37]),
+                    "amount": amount,
                     "amplitude": safe_float(fields[43]) if len(fields) > 43 else None,
                     "source": self.name,
                     "provider_timestamp": _parse_provider_timestamp(

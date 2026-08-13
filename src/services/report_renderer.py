@@ -166,6 +166,7 @@ def render(
             "result": r,
             "signal_text": display_advice,
             "signal_emoji": se,
+            "display_action": display_action,
             "stock_name": _escape_md(rn),
             "localized_operation_advice": display_advice,
             "localized_trend_prediction": localize_trend_prediction(r.trend_prediction, report_language),

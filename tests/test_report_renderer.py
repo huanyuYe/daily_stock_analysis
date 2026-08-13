@@ -135,6 +135,36 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("作战计划", out)
         self.assertNotIn("盘中决策护栏", out)
 
+    def test_render_markdown_labels_neutral_prices_as_conditional(self) -> None:
+        r = _make_result(
+            sentiment_score=59,
+            operation_advice="观望",
+            dashboard={
+                "core_conclusion": {"one_sentence": "等待确认"},
+                "intelligence": {"risk_alerts": []},
+                "battle_plan": {
+                    "plan_mode": "conditional_watch",
+                    "sniper_points": {
+                        "ideal_buy": "52.51元",
+                        "secondary_buy": "51.16元",
+                        "stop_loss": "50.20元",
+                        "take_profit": "55.00元",
+                    },
+                },
+            },
+        )
+        r.action = "watch"
+        r.action_label = "观望"
+
+        out = render("markdown", [r], summary_only=False)
+
+        self.assertIsNotNone(out)
+        self.assertIn("条件入场参考", out)
+        self.assertIn("次级条件入场参考", out)
+        self.assertIn("持仓风控线", out)
+        self.assertIn("持仓止盈观察位", out)
+        self.assertNotIn("| 🎯 理想买入点 |", out)
+
     def test_render_markdown_omits_decision_signal_excerpt(self) -> None:
         """Markdown reports omit the duplicated DecisionSignal excerpt."""
         r = _with_decision_signal_summary(_make_result())

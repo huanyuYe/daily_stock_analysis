@@ -2090,9 +2090,10 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
 
             self.assertIsNotNone(result)
             self.assertEqual(result.decision_type, "hold")
-            self.assertEqual(result.operation_advice, "洗盘观察")
+            self.assertEqual(result.action, "watch")
+            self.assertEqual(result.operation_advice, "观望")
             self.assertEqual(result.dashboard.get("decision_type"), "hold")
-            self.assertEqual(result.dashboard.get("operation_advice"), "洗盘观察")
+            self.assertEqual(result.dashboard.get("operation_advice"), "观望")
             self.assertEqual(result.dashboard.get("sentiment_score"), result.sentiment_score)
             explanation = result.dashboard["agent_disagreement_explanation"]
             self.assertEqual(explanation["risk_control"]["post_risk_signal"], "sell")
@@ -2104,8 +2105,13 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
                     {
                         "source": "structure_and_fundamentals",
                         "from_action": "sell",
-                        "to_action": result.action,
-                    }
+                        "to_action": "hold",
+                    },
+                    {
+                        "source": "action_plan_reconciliation",
+                        "from_action": "hold",
+                        "to_action": "watch",
+                    },
                 ],
             )
             saved_result = pipeline.db.save_analysis_history.call_args.kwargs["result"]

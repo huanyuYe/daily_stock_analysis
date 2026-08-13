@@ -229,6 +229,40 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         self.assertIn("volume_change_ratio", enhanced)
 
     @patch("src.core.pipeline.get_market_now")
+    @patch("src.core.pipeline.get_market_for_stock", return_value="us")
+    def test_realtime_change_uses_quote_pre_close_not_different_daily_row(
+        self, _mock_market, mock_now
+    ) -> None:
+        mock_now.return_value = datetime(2026, 8, 11, 12, 30, tzinfo=timezone.utc)
+        context = {
+            "code": "OKLO",
+            "date": "2026-08-10",
+            "today": {"close": 42.19},
+            "yesterday": {"close": 42.19, "volume": 1_000_000},
+        }
+        quote = UnifiedRealtimeQuote(
+            code="OKLO",
+            source=RealtimeSource.TENCENT,
+            price=44.27,
+            pre_close=48.42,
+            change_pct=-8.57,
+        )
+        trend = TrendAnalysisResult(
+            code="OKLO",
+            trend_status=TrendStatus.BEAR,
+            ma5=45.0,
+            ma10=46.0,
+            ma20=47.0,
+        )
+
+        enhanced = self.pipeline._enhance_context(context, quote, None, trend, "Oklo")
+
+        self.assertEqual(enhanced["today"]["pre_close"], 48.42)
+        self.assertAlmostEqual(enhanced["today"]["change_amount"], -4.15)
+        self.assertAlmostEqual(enhanced["today"]["pct_chg"], -8.5708, places=3)
+        self.assertEqual(enhanced["price_change_ratio"], -8.57)
+
+    @patch("src.core.pipeline.get_market_now")
     @patch("src.core.pipeline.get_market_for_stock", return_value="cn")
     def test_tencent_688691_volume_change_ratio_uses_normalized_share_volume(
         self, _mock_market, mock_now
@@ -349,7 +383,10 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         self.assertTrue(enhanced["today"]["is_estimated"])
         self.assertEqual(
             enhanced["today"]["estimated_fields"],
-            ["close", "open", "high", "low", "ma5", "ma10", "ma20", "volume", "pct_chg"],
+            [
+                "close", "open", "high", "low", "ma5", "ma10", "ma20",
+                "volume", "pct_chg", "pre_close", "change_amount",
+            ],
         )
         self.assertEqual(enhanced["today"]["fetched_at"], "2026-05-31T10:00:05+00:00")
         self.assertEqual(enhanced["today"]["provider_timestamp"], "2026-05-31T10:00:00+00:00")

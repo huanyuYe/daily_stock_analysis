@@ -1,0 +1,10 @@
+[Unit]
+Description=Morning US-catalyst cross-market theme report
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:25:00 Asia/Shanghai
+AccuracySec=1min
+Unit=daily-stock-analysis-cross-market-theme@morning.service
+
+[Install]
+WantedBy=timers.target

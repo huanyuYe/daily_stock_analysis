@@ -14,10 +14,16 @@ import queue
 import threading
 import time
 from datetime import date, datetime, time as datetime_time, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from data_provider.us_index_mapping import is_us_stock_code
+from src.services.upstream_resilience import (
+    PersistentJsonCache,
+    UpstreamRequestGate,
+    get_yahoo_request_gate,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -143,6 +149,8 @@ def format_earnings_options_prompt_section(
     activity = context.get("activity") or {}
     candidates = context.get("high_probability_contracts") or []
     unusual = context.get("recent_unusual_activity") or []
+    gap_value = expiry.get("gap_from_earnings_days")
+    gap_text = f"{gap_value}d" if gap_value is not None else "N/A"
     lines = [f"\n## 🧾 {title}", ""]
     if report_language == "en":
         labels = {
@@ -203,7 +211,7 @@ def format_earnings_options_prompt_section(
         [
             f"- {labels['earnings']}: {earnings.get('date') or 'N/A'} (T{earnings.get('days_until', 'N/A'):+}d if known; timing={earnings.get('timing') or 'unknown'})" if isinstance(earnings.get('days_until'), int) else f"- {labels['earnings']}: {earnings.get('date') or 'N/A'} (timing={earnings.get('timing') or 'unknown'})",
             f"- {labels['estimates']}: EPS avg/range={earnings_estimates.get('eps_average', 'N/A')}/[{earnings_estimates.get('eps_low', 'N/A')}, {earnings_estimates.get('eps_high', 'N/A')}]; revenue avg={earnings_estimates.get('revenue_average', 'N/A')}",
-            f"- {labels['expiry']}: {expiry.get('date') or 'N/A'} (earnings gap={expiry.get('gap_from_earnings_days', 'N/A')}d; adjacent={expiry.get('is_earnings_adjacent', False)})",
+            f"- {labels['expiry']}: {expiry.get('date') or 'N/A'} (earnings gap={gap_text}; adjacent={expiry.get('is_earnings_adjacent', False)})",
             f"- {labels['underlying']}: {underlying.get('price', 'N/A')}; change={underlying.get('change_pct', 'N/A')}%",
             f"- {labels['flow']}: {activity.get('call_volume', 0)}/{activity.get('put_volume', 0)}; Put/Call={activity.get('put_call_volume_ratio', 'N/A')}",
             f"- {labels['source']}: {context.get('source_id')}; verification={context.get('verification_status')}; as_of={context.get('as_of')}",
@@ -298,6 +306,12 @@ def build_earnings_options_report_view(
             "unusual": "最近异常期权行为",
             "source_note": "聚合单源数据；PoP 不是历史胜率或收益保证。",
         }
+    if context.get("source_id") == "futu_opend_options":
+        report_labels["source_note"] = {
+            "en": "Read-only delayed Futu OpenD market data; PoP is not a historical win rate or return guarantee.",
+            "ko": "Futu OpenD 읽기 전용 지연 시세이며 PoP는 과거 승률 또는 수익 보장이 아닙니다.",
+            "zh": "Futu OpenD 只读延迟行情；PoP 不是历史胜率或收益保证。",
+        }.get(report_language, "Futu OpenD 只读延迟行情；PoP 不是历史胜率或收益保证。")
     return {
         "title": earnings_options_title(context, report_language),
         "earnings_date": earnings.get("date"),
@@ -315,6 +329,8 @@ def build_earnings_options_report_view(
         "candidates": list(context.get("high_probability_contracts") or [])[:5],
         "unusual_activity": list(context.get("recent_unusual_activity") or [])[:3],
         "source_id": context.get("source_id"),
+        "source_tier": context.get("source_tier"),
+        "verification_status": context.get("verification_status"),
         "as_of": context.get("as_of"),
         "model_disclaimer": context.get("model_disclaimer"),
         "labels": report_labels,
@@ -333,6 +349,13 @@ class EarningsOptionsService:
         profit_probability_threshold: float = 0.50,
         timeout_seconds: float = 8.0,
         cache_ttl_seconds: int = 900,
+        last_good_ttl_seconds: int = 6 * 60 * 60,
+        request_min_interval_seconds: float = 2.0,
+        rate_limit_cooldown_seconds: int = 90,
+        persistent_cache_dir: Optional[Path] = None,
+        request_gate: Optional[UpstreamRequestGate] = None,
+        futu_fallback_enabled: bool = False,
+        futu_snapshot_loader: Optional[Callable[..., Dict[str, Any]]] = None,
         ticker_factory: Optional[Callable[[str], Any]] = None,
         now_factory: Optional[Callable[[], datetime]] = None,
     ) -> None:
@@ -342,8 +365,30 @@ class EarningsOptionsService:
         self.profit_probability_threshold = max(0.01, min(0.99, float(profit_probability_threshold)))
         self.timeout_seconds = max(1.0, float(timeout_seconds))
         self.cache_ttl_seconds = max(60, int(cache_ttl_seconds))
+        self.last_good_ttl_seconds = max(self.cache_ttl_seconds, int(last_good_ttl_seconds))
         self._ticker_factory = ticker_factory
+        self._futu_fallback_enabled = bool(
+            futu_fallback_enabled or futu_snapshot_loader is not None
+        )
+        self._futu_snapshot_loader = futu_snapshot_loader
         self._now_factory = now_factory or (lambda: datetime.now(_NEW_YORK))
+        self._request_gate = request_gate or (
+            None if ticker_factory is not None else get_yahoo_request_gate()
+        )
+        if self._request_gate is not None:
+            self._request_gate.min_interval_seconds = max(
+                0.0,
+                float(request_min_interval_seconds),
+            )
+            self._request_gate.rate_limit_cooldown_seconds = max(
+                0.0,
+                float(rate_limit_cooldown_seconds),
+            )
+        self._persistent_cache = (
+            None
+            if ticker_factory is not None and persistent_cache_dir is None
+            else PersistentJsonCache("earnings_options", cache_dir=persistent_cache_dir)
+        )
         self._cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
         self._cache_lock = threading.Lock()
 
@@ -380,7 +425,8 @@ class EarningsOptionsService:
 
         def worker() -> None:
             try:
-                result_queue.put((True, self._analyze_sync(normalized, realtime_quote)))
+                payload = self._analyze_with_fallback(normalized, realtime_quote)
+                result_queue.put((True, payload))
             except Exception as exc:  # pragma: no cover - defensive thread boundary
                 result_queue.put((False, exc))
 
@@ -389,14 +435,114 @@ class EarningsOptionsService:
             success, payload = result_queue.get(timeout=self.timeout_seconds)
         except queue.Empty:
             logger.warning("[%s] earnings/options fetch timed out after %.1fs", normalized, self.timeout_seconds)
-            return {"status": "failed", "symbol": normalized, "error": "timeout", "fail_open": True}
+            return self._last_good_or_failure(
+                normalized,
+                market_phase_context=market_phase_context,
+                error="timeout",
+            )
         if not success:
             logger.warning("[%s] earnings/options fetch failed: %s", normalized, payload)
-            return {"status": "failed", "symbol": normalized, "error": type(payload).__name__, "fail_open": True}
+            return self._last_good_or_failure(
+                normalized,
+                market_phase_context=market_phase_context,
+                error=type(payload).__name__,
+            )
 
         payload["market_phase_context"] = dict(market_phase_context or {})
         with self._cache_lock:
             self._cache[cache_key] = (now_monotonic, dict(payload))
+        if payload.get("status") == "ok" and self._persistent_cache is not None:
+            try:
+                self._persistent_cache.put(cache_key, payload)
+            except OSError as exc:
+                logger.debug("[%s] earnings/options last-good cache write failed: %s", normalized, exc)
+        return payload
+
+    def _analyze_with_fallback(self, symbol: str, realtime_quote: Any) -> Dict[str, Any]:
+        """Try the paced Yahoo route, then the configured read-only Futu route."""
+
+        yahoo_error: Optional[BaseException] = None
+        try:
+            operation = lambda: self._analyze_sync(symbol, realtime_quote)
+            payload = (
+                self._request_gate.call(operation, block_when_busy=False)
+                if self._request_gate is not None
+                else operation()
+            )
+            if payload.get("status") != "missing" or not self._futu_fallback_enabled:
+                return payload
+            yahoo_error = RuntimeError(
+                ",".join(str(item) for item in (payload.get("warnings") or []))
+                or "Yahoo option chain is missing"
+            )
+        except Exception as exc:  # noqa: BLE001 - provider fallback boundary
+            yahoo_error = exc
+
+        if not self._futu_fallback_enabled:
+            assert yahoo_error is not None
+            raise yahoo_error
+        try:
+            payload = self._analyze_futu_sync(symbol, realtime_quote)
+        except Exception as futu_error:  # noqa: BLE001 - preserve both provider failures
+            raise RuntimeError(
+                f"Yahoo options failed ({type(yahoo_error).__name__}); "
+                f"Futu options failed ({type(futu_error).__name__})"
+            ) from futu_error
+        warnings = list(payload.get("warnings") or [])
+        warnings.append(f"yahoo_fresh_fetch_failed:{type(yahoo_error).__name__}")
+        payload["warnings"] = list(dict.fromkeys(warnings))
+        payload["fresh_fetch_attempted"] = True
+        return payload
+
+    def _last_good_or_failure(
+        self,
+        symbol: str,
+        *,
+        market_phase_context: Optional[Dict[str, Any]],
+        error: str,
+    ) -> Dict[str, Any]:
+        cached = self._persistent_cache.get(
+            symbol,
+            max_age_seconds=self.last_good_ttl_seconds,
+        ) if self._persistent_cache is not None else None
+        if cached is None:
+            return {
+                "status": "failed",
+                "symbol": symbol,
+                "error": error,
+                "fail_open": True,
+                "fresh_fetch_attempted": True,
+            }
+        value, age_seconds = cached
+        if not isinstance(value, dict) or value.get("status") != "ok":
+            return {
+                "status": "failed",
+                "symbol": symbol,
+                "error": error,
+                "fail_open": True,
+                "fresh_fetch_attempted": True,
+            }
+        payload = dict(value)
+        warnings = list(payload.get("warnings") or [])
+        warnings.append("using_stale_last_good_after_fresh_fetch_failure")
+        payload.update(
+            {
+                "market_phase_context": dict(market_phase_context or {}),
+                "verification_status": "single_source_stale",
+                "cache_status": "last_good",
+                "stale": True,
+                "stale_age_seconds": round(age_seconds, 1),
+                "fresh_fetch_attempted": True,
+                "fresh_fetch_error": error,
+                "warnings": list(dict.fromkeys(warnings)),
+            }
+        )
+        logger.warning(
+            "[%s] using earnings/options last-good cache age=%.1fs after %s",
+            symbol,
+            age_seconds,
+            error,
+        )
         return payload
 
     def _analyze_sync(self, symbol: str, realtime_quote: Any) -> Dict[str, Any]:
@@ -456,6 +602,171 @@ class EarningsOptionsService:
         years_to_expiry = max((expiry_close - now).total_seconds(), 60.0) / (365.0 * 86400.0)
         calls = self._normalize_contracts(getattr(chain, "calls", None), "call", spot, years_to_expiry)
         puts = self._normalize_contracts(getattr(chain, "puts", None), "put", spot, years_to_expiry)
+        return self._build_payload(
+            symbol=symbol,
+            now=now,
+            earnings_date=earnings_date,
+            earnings_timing=earnings_timing,
+            earnings_estimates=earnings_estimates,
+            expiry_date=expiry_date,
+            spot=spot,
+            previous_close=previous_close,
+            change_pct=change_pct,
+            calls=calls,
+            puts=puts,
+            source_id="yfinance_options_calendar",
+            source_tier="market_aggregator",
+            verification_status="single_source",
+            warnings=[
+                "aggregator_data_may_be_delayed",
+                "earnings_date_single_source_unverified",
+                "option_probability_is_model_estimate",
+            ],
+        )
+
+    def _analyze_futu_sync(self, symbol: str, realtime_quote: Any) -> Dict[str, Any]:
+        """Build the same complete option payload from read-only Futu snapshots."""
+
+        now = self._now_factory().astimezone(_NEW_YORK)
+        loader = self._futu_snapshot_loader
+        if loader is None:
+            from src.brokers.futu.options import fetch_futu_option_snapshot
+
+            loader = fetch_futu_option_snapshot
+        # The OpenD option-chain endpoint accepts a bounded interval.  A
+        # 29-day window covers the weekly expiries used by this near-expiry
+        # report while staying below the SDK's one-month limit.
+        end_date = date.fromordinal(
+            now.date().toordinal() + min(self.lookahead_days, 29)
+        )
+        snapshot = loader(
+            symbol,
+            start=now.date(),
+            end=end_date,
+            preferred_expiry=None,
+        )
+        expiry_date = _as_date(snapshot.get("expiry"))
+        rows = list(snapshot.get("contracts") or [])
+        if expiry_date is None or not rows:
+            return {
+                "status": "missing",
+                "symbol": symbol,
+                "source_id": "futu_opend_options",
+                "verification_status": "single_source_delayed",
+                "warnings": ["no_future_option_expiry"],
+            }
+        spot = self._quote_number(realtime_quote, "price")
+        previous_close = self._quote_number(realtime_quote, "pre_close")
+        change_pct = self._quote_number(realtime_quote, "change_pct")
+        if change_pct is None and spot and previous_close:
+            change_pct = (spot - previous_close) / previous_close * 100.0
+        if not spot or spot <= 0:
+            return {
+                "status": "missing",
+                "symbol": symbol,
+                "source_id": "futu_opend_options",
+                "verification_status": "single_source_delayed",
+                "warnings": ["underlying_price_missing"],
+            }
+
+        expiry_close = datetime.combine(expiry_date, datetime_time(16, 0), tzinfo=_NEW_YORK)
+        years_to_expiry = max((expiry_close - now).total_seconds(), 60.0) / (365.0 * 86400.0)
+        calls: List[Dict[str, Any]] = []
+        puts: List[Dict[str, Any]] = []
+        provider_times: List[datetime] = []
+        for row in rows:
+            option_type = str(row.get("option_type") or "").strip().lower()
+            option_type = "call" if option_type.endswith("call") else (
+                "put" if option_type.endswith("put") else ""
+            )
+            if not option_type:
+                continue
+            raw_iv = _as_float(row.get("option_implied_volatility"))
+            update_time = self._parse_provider_datetime(row.get("update_time"))
+            if update_time is not None:
+                provider_times.append(update_time)
+            strike = _as_float(row.get("option_strike_price"))
+            mapped = {
+                "contractSymbol": str(row.get("code") or ""),
+                "strike": strike,
+                "bid": row.get("bid_price"),
+                "ask": row.get("ask_price"),
+                "lastPrice": row.get("last_price"),
+                # Futu exposes option IV as a percentage (for example 104.238).
+                "impliedVolatility": raw_iv / 100.0 if raw_iv is not None else None,
+                "volume": row.get("volume"),
+                "openInterest": row.get("option_open_interest"),
+                "inTheMoney": bool(
+                    strike is not None
+                    and ((option_type == "call" and strike < spot) or (option_type == "put" and strike > spot))
+                ),
+                "lastTradeDate": update_time,
+            }
+            normalized = self._normalize_contract_rows(
+                [mapped], option_type, spot, years_to_expiry
+            )
+            (calls if option_type == "call" else puts).extend(normalized)
+        provider_as_of = max(provider_times) if provider_times else now
+        return self._build_payload(
+            symbol=symbol,
+            now=now,
+            earnings_date=None,
+            earnings_timing="unknown",
+            earnings_estimates={},
+            expiry_date=expiry_date,
+            spot=spot,
+            previous_close=previous_close,
+            change_pct=change_pct,
+            calls=calls,
+            puts=puts,
+            source_id="futu_opend_options",
+            source_tier="broker_market_data",
+            verification_status="single_source_delayed",
+            source_as_of=provider_as_of,
+            warnings=[
+                "futu_market_data_may_be_delayed",
+                "earnings_calendar_unavailable_after_yahoo_failure",
+                "option_probability_is_model_estimate",
+            ],
+        )
+
+    @staticmethod
+    def _parse_provider_datetime(value: Any) -> Optional[datetime]:
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                parsed = datetime.fromisoformat(str(value or "").strip())
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_NEW_YORK)
+        return parsed.astimezone(_NEW_YORK)
+
+    def _build_payload(
+        self,
+        *,
+        symbol: str,
+        now: datetime,
+        earnings_date: Optional[date],
+        earnings_timing: str,
+        earnings_estimates: Dict[str, Optional[float]],
+        expiry_date: date,
+        spot: float,
+        previous_close: Optional[float],
+        change_pct: Optional[float],
+        calls: List[Dict[str, Any]],
+        puts: List[Dict[str, Any]],
+        source_id: str,
+        source_tier: str,
+        verification_status: str,
+        warnings: List[str],
+        source_as_of: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        eligible_earnings = (
+            earnings_date is not None
+            and -1 <= (earnings_date - now.date()).days <= self.lookahead_days
+        )
         contracts = calls + puts
         activity = self._activity_summary(calls, puts)
         eligible_probability = sorted(
@@ -496,10 +807,10 @@ class EarningsOptionsService:
             "status": "ok",
             "symbol": symbol,
             "market": "us",
-            "source_id": "yfinance_options_calendar",
-            "source_tier": "market_aggregator",
-            "verification_status": "single_source",
-            "as_of": now.astimezone(timezone.utc).isoformat(),
+            "source_id": source_id,
+            "source_tier": source_tier,
+            "verification_status": verification_status,
+            "as_of": (source_as_of or now).astimezone(timezone.utc).isoformat(),
             "earnings": {
                 "date": earnings_date.isoformat() if earnings_date else None,
                 "days_until": (earnings_date - now.date()).days if earnings_date else None,
@@ -523,11 +834,7 @@ class EarningsOptionsService:
             "high_probability_threshold": self.profit_probability_threshold,
             "high_probability_contracts": high_probability,
             "recent_unusual_activity": unusual,
-            "warnings": [
-                "aggregator_data_may_be_delayed",
-                "earnings_date_single_source_unverified",
-                "option_probability_is_model_estimate",
-            ],
+            "warnings": list(warnings),
             "model_disclaimer": (
                 "Risk-neutral lognormal expiry estimate using provider IV and a zero short-rate; "
                 "fees, slippage, early exercise, volatility skew changes and earnings gaps are excluded."
@@ -627,6 +934,15 @@ class EarningsOptionsService:
             rows = frame.to_dict("records")
         except Exception:
             return []
+        return self._normalize_contract_rows(rows, option_type, spot, years_to_expiry)
+
+    def _normalize_contract_rows(
+        self,
+        rows: Iterable[Dict[str, Any]],
+        option_type: str,
+        spot: float,
+        years_to_expiry: float,
+    ) -> List[Dict[str, Any]]:
         normalized: List[Dict[str, Any]] = []
         for row in rows:
             strike = _as_float(row.get("strike"))

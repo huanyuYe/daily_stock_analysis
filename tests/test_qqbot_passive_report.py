@@ -121,6 +121,20 @@ class QQBotPassiveReportTest(unittest.TestCase):
             MAX_QQ_PASSIVE_REPLIES * QQ_MESSAGE_CHARS,
         )
 
+    def test_summary_treats_hold_as_neutral_instead_of_sell(self):
+        content = self._full_report(count=2).replace(
+            "⚪ **测试股票1(600001)**: 观望",
+            "🟡 **测试股票1(600001)**: 持有",
+            1,
+        )
+        report = self._write_report("report_20260810.md", 0, content)
+
+        summary = build_qq_summary(report, max_chars=12000)
+
+        self.assertIn("🟢买入:0 🟡观望:2 🔴卖出:0", summary)
+        self.assertIn("🟡 **测试股票1(600001)**: 持有", summary)
+        self.assertNotIn("🔴 **测试股票1(600001)**", summary)
+
     def test_summary_fails_closed_when_a_stock_detail_is_missing(self):
         content = self._full_report().replace(
             "## ⚪ 测试股票9 (600009)",

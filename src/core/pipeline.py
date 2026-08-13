@@ -28,7 +28,10 @@ from src.config import FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT, get_config, Co
 from src.storage import get_db
 from data_provider import DataFetcherManager
 from data_provider.base import is_bse_code, normalize_stock_code
-from data_provider.realtime_types import ChipDistribution
+from data_provider.realtime_types import (
+    ChipDistribution,
+    resolve_realtime_change_metrics,
+)
 from src.analyzer import (
     GeminiAnalyzer,
     AnalysisResult,
@@ -49,6 +52,7 @@ from src.report_language import (
     normalize_report_language,
 )
 from src.search_service import SearchService
+from src.action_plan_guardrail import reconcile_action_plan_with_final_action
 from src.analysis_context_pack_prompt import format_analysis_context_pack_prompt_section
 from src.analysis_context_pack_overview import render_analysis_context_pack_overview
 from src.portfolio_context_prompt import format_portfolio_context_prompt_section
@@ -314,6 +318,26 @@ class StockAnalysisPipeline:
                 0.50,
             ),
             timeout_seconds=getattr(self.config, "earnings_options_fetch_timeout_sec", 8.0),
+            last_good_ttl_seconds=getattr(
+                self.config,
+                "earnings_options_last_good_ttl_sec",
+                6 * 60 * 60,
+            ),
+            request_min_interval_seconds=getattr(
+                self.config,
+                "earnings_options_request_min_interval_sec",
+                2.0,
+            ),
+            rate_limit_cooldown_seconds=getattr(
+                self.config,
+                "earnings_options_rate_limit_cooldown_sec",
+                90,
+            ),
+            futu_fallback_enabled=getattr(
+                self.config,
+                "earnings_options_futu_fallback_enabled",
+                False,
+            ),
         )
         
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
@@ -917,6 +941,18 @@ class StockAnalysisPipeline:
                     report_type=report_type.value,
                     previous_operation_advice=action_source_advice,
                 )
+                plan_adjustments = reconcile_action_plan_with_final_action(
+                    result,
+                    portfolio_context=portfolio_context,
+                    report_language=getattr(result, "report_language", None)
+                    or getattr(self.config, "report_language", "zh"),
+                )
+                if plan_adjustments:
+                    logger.info(
+                        "[action_plan_guardrail] Applied adjustments for %s: %s",
+                        code,
+                        plan_adjustments,
+                    )
 
             # Step 8: 保存分析历史记录
             if result and result.success:
@@ -1029,6 +1065,14 @@ class StockAnalysisPipeline:
                 'name': getattr(realtime_quote, 'name', ''),
                 'price': getattr(realtime_quote, 'price', None),
                 'change_pct': getattr(realtime_quote, 'change_pct', None),
+                'change_amount': getattr(realtime_quote, 'change_amount', None),
+                'pre_close': getattr(realtime_quote, 'pre_close', None),
+                'open_price': getattr(realtime_quote, 'open_price', None),
+                'high': getattr(realtime_quote, 'high', None),
+                'low': getattr(realtime_quote, 'low', None),
+                'volume': getattr(realtime_quote, 'volume', None),
+                'amount': getattr(realtime_quote, 'amount', None),
+                'amplitude': getattr(realtime_quote, 'amplitude', None),
                 'volume_ratio': volume_ratio,
                 'volume_ratio_desc': self._describe_volume_ratio(volume_ratio) if volume_ratio else '无数据',
                 'turnover_rate': getattr(realtime_quote, 'turnover_rate', None),
@@ -1104,7 +1148,17 @@ class StockAnalysisPipeline:
                 low_p = getattr(realtime_quote, 'low', None) or price
                 vol = getattr(realtime_quote, 'volume', None)
                 amt = getattr(realtime_quote, 'amount', None)
-                pct = getattr(realtime_quote, 'change_pct', None)
+                change_metrics = resolve_realtime_change_metrics(
+                    price=price,
+                    pre_close=getattr(realtime_quote, 'pre_close', None),
+                    change_amount=getattr(realtime_quote, 'change_amount', None),
+                    change_pct=getattr(realtime_quote, 'change_pct', None),
+                    fallback_pre_close=yesterday_close,
+                )
+                realtime_pre_close = change_metrics['pre_close']
+                change_amount = change_metrics['change_amount']
+                pct = change_metrics['change_pct']
+                amplitude = getattr(realtime_quote, 'amplitude', None)
                 fetched_at = getattr(realtime_quote, 'fetched_at', None)
                 provider_timestamp = getattr(realtime_quote, 'provider_timestamp', None)
                 fallback_from = getattr(realtime_quote, 'fallback_from', None)
@@ -1137,6 +1191,15 @@ class StockAnalysisPipeline:
                 if pct is not None:
                     realtime_today['pct_chg'] = pct
                     estimated_fields.append('pct_chg')
+                if realtime_pre_close is not None:
+                    realtime_today['pre_close'] = realtime_pre_close
+                    estimated_fields.append('pre_close')
+                if change_amount is not None:
+                    realtime_today['change_amount'] = change_amount
+                    estimated_fields.append('change_amount')
+                if amplitude is not None:
+                    realtime_today['amplitude'] = amplitude
+                    estimated_fields.append('amplitude')
                 realtime_today['estimated_fields'] = estimated_fields
                 if isinstance(market_phase_context, dict) and "is_partial_bar" in market_phase_context:
                     realtime_today['is_partial_bar'] = market_phase_context.get("is_partial_bar")
@@ -1156,7 +1219,8 @@ class StockAnalysisPipeline:
                     realtime_today['entitlement_level'] = entitlement_level
                 realtime_owned_fields = {
                     'open', 'high', 'low', 'close',
-                    'volume', 'amount', 'pct_chg', 'pctChg',
+                    'volume', 'amount', 'pct_chg', 'pctChg', 'pre_close',
+                    'preClose', 'change_amount', 'changeAmount', 'amplitude',
                     'date', 'data_source', 'dataSource', 'source',
                     'realtime_source', 'realtimeSource',
                     'is_partial_bar', 'isPartialBar', 'is_estimated',
@@ -1174,7 +1238,9 @@ class StockAnalysisPipeline:
                     price, trend_result.ma5, trend_result.ma10, trend_result.ma20
                 )
                 enhanced['date'] = market_today
-                if yesterday_close is not None:
+                if pct is not None:
+                    enhanced['price_change_ratio'] = round(float(pct), 2)
+                elif yesterday_close is not None:
                     try:
                         yc = float(yesterday_close)
                         if yc > 0:
@@ -1784,6 +1850,31 @@ class StockAnalysisPipeline:
                         source="daily_market_context",
                         before=action_before_guardrail,
                         after=action_after_guardrail,
+                    )
+                else:
+                    action_chain_valid = False
+                action_before_plan_guardrail = getattr(result, "action", None)
+                plan_adjustments = reconcile_action_plan_with_final_action(
+                    result,
+                    portfolio_context=portfolio_context,
+                    report_language=getattr(result, "report_language", None)
+                    or getattr(self.config, "report_language", "zh"),
+                )
+                if plan_adjustments:
+                    logger.info(
+                        "[action_plan_guardrail] Applied agent adjustments for %s: %s",
+                        code,
+                        plan_adjustments,
+                    )
+                action_after_plan_guardrail = normalize_decision_action(
+                    getattr(result, "action", None)
+                )
+                if action_chain_valid and action_after_plan_guardrail is not None:
+                    capture_pipeline_action_adjustment(
+                        pipeline_adjustments,
+                        source="action_plan_reconciliation",
+                        before=action_before_plan_guardrail,
+                        after=action_after_plan_guardrail,
                     )
                 else:
                     action_chain_valid = False

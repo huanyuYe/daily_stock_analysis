@@ -224,6 +224,42 @@ def test_tencent_fetcher_gets_us_main_indices() -> None:
     assert indices is not None
     assert [item["code"] for item in indices] == ["SPX", "IXIC", "DJI"]
     assert all(item["source"] == "TencentFetcher" for item in indices)
+    assert all(item["amount"] is None for item in indices)
+
+
+def test_tencent_fetcher_drops_hk_index_volume_masquerading_as_amount() -> None:
+    def response_for(symbol: str):
+        fields = [""] * 50
+        fields[1] = symbol
+        fields[3] = "25440.17"
+        fields[4] = "25652.25"
+        fields[5] = "25498.39"
+        fields[6] = "21677907.0946"
+        fields[30] = "2026/08/12 16:08:11"
+        fields[31] = "-212.08"
+        fields[32] = "-0.83"
+        fields[33] = "25498.39"
+        fields[34] = "25323.33"
+        fields[35] = "25440.170"
+        fields[37] = "21677907.095"
+
+        class QuoteResponse:
+            content = f'v_{symbol}="{"~".join(fields)}";'.encode("gb18030")
+
+            def raise_for_status(self) -> None:
+                return None
+
+        return QuoteResponse()
+
+    with patch(
+        "data_provider.tencent_fetcher.requests.get",
+        side_effect=lambda url, **kwargs: response_for(url.rsplit("=", 1)[-1]),
+    ):
+        indices = TencentFetcher().get_main_indices("hk")
+
+    assert indices is not None
+    assert [item["code"] for item in indices] == ["HSI", "HSTECH", "HSCEI"]
+    assert all(item["amount"] is None for item in indices)
 
 
 def test_tencent_fetcher_parses_qfq_daily_response() -> None:

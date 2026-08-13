@@ -3056,6 +3056,34 @@ Sector text.
         assert "新闻。" in result
         assert "算力产业链延续活跃" not in result
 
+    def test_hk_indices_block_uses_market_unit_and_hides_missing_turnover(self):
+        from src.market_analyzer import MarketAnalyzer, MarketIndex, MarketOverview
+
+        ma = MarketAnalyzer.__new__(MarketAnalyzer)
+        ma.config = SimpleNamespace(
+            report_language="zh",
+            market_review_color_scheme="green_up",
+        )
+        ma.region = "hk"
+        overview = MarketOverview(
+            date="2026-08-12",
+            indices=[
+                MarketIndex(
+                    code="HSI",
+                    name="恒生指数",
+                    current=25440.17,
+                    change_pct=-0.83,
+                    amount=None,
+                )
+            ],
+        )
+
+        result = ma._build_indices_block(overview)
+
+        assert "成交额(十亿港元)" in result
+        assert "| 恒生指数 | 25440.17 | 🔴 -0.83%" in result
+        assert result.rstrip().endswith("| N/A |")
+
     def test_inject_data_into_review_appends_sector_block_when_heading_drifts(self):
         from src.market_analyzer import MarketOverview
 

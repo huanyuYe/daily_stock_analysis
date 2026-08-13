@@ -171,12 +171,13 @@ class TestFundamentalContext(unittest.TestCase):
             "errors": [],
         }
         with patch("src.config.get_config", return_value=cfg), \
-                patch.object(manager, "get_realtime_quote", return_value=quote), \
+                patch.object(manager, "get_realtime_quote") as quote_fetch, \
                 patch(
                     "data_provider.yfinance_fundamental_adapter.YfinanceFundamentalAdapter.get_fundamental_bundle",
                     return_value=bundle,
                 ):
-            ctx = manager.get_fundamental_context("AAPL")
+            ctx = manager.get_fundamental_context("AAPL", realtime_quote=quote)
+        quote_fetch.assert_not_called()
         self.assertEqual(ctx["market"], "us")
         # Offshore status only considers valuation/growth/earnings (capital_flow
         # etc. are intentionally not_supported); "ok" when all three populate.

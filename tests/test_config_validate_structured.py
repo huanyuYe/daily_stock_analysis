@@ -43,6 +43,7 @@ def _make_config(**kwargs) -> Config:
         serpapi_keys=[],
         searxng_base_urls=[],
         searxng_public_instances_enabled=True,
+        sec_edgar_user_agent="daily-stock-analysis ops@example.com",
         wechat_webhook_url="https://example.com/webhook",
         feishu_webhook_url=None,
         telegram_bot_token=None,
@@ -719,6 +720,31 @@ class TestValidateStructuredNotification:
         issues = cfg.validate_structured()
         info = [i for i in issues if i.severity == "info"]
         assert not any("搜索引擎" in i.message and "未配置" in i.message for i in info)
+
+    def test_sec_user_agent_without_contact_email_warns(self):
+        cfg = _make_config(
+            regulatory_disclosures_enabled=True,
+            sec_edgar_user_agent="daily-stock-analysis contact=https://example.com",
+        )
+
+        issues = cfg.validate_structured()
+
+        assert any(
+            issue.field == "SEC_EDGAR_USER_AGENT"
+            and issue.severity == "warning"
+            and issue.code == "sec_user_agent_contact_missing"
+            for issue in issues
+        )
+
+    def test_sec_user_agent_with_contact_email_has_no_contact_warning(self):
+        cfg = _make_config(
+            regulatory_disclosures_enabled=True,
+            sec_edgar_user_agent="daily-stock-analysis ops@example.com",
+        )
+
+        issues = cfg.validate_structured()
+
+        assert not any(issue.code == "sec_user_agent_contact_missing" for issue in issues)
 
 
 # ---------------------------------------------------------------------------

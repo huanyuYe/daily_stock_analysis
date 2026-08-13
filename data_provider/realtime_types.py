@@ -91,6 +91,57 @@ def safe_int(val: Any, default: Optional[int] = None) -> Optional[int]:
     return default
 
 
+def resolve_realtime_change_metrics(
+    *,
+    price: Any,
+    pre_close: Any = None,
+    change_amount: Any = None,
+    change_pct: Any = None,
+    fallback_pre_close: Any = None,
+) -> Dict[str, Optional[float]]:
+    """Return one mathematically coherent realtime price-change tuple.
+
+    Providers do not always expose ``pre_close`` even when they expose a
+    percentage or absolute change.  Mixing such a quote with a historical row
+    from another session can invert the displayed direction.  Prefer the
+    provider's explicit previous close, otherwise derive it from another field
+    in the same quote, and only then use the historical fallback.
+    """
+
+    resolved_price = safe_float(price)
+    raw_pre_close = safe_float(pre_close)
+    raw_change_amount = safe_float(change_amount)
+    raw_change_pct = safe_float(change_pct)
+    historical_pre_close = safe_float(fallback_pre_close)
+
+    resolved_pre_close = raw_pre_close if raw_pre_close and raw_pre_close > 0 else None
+    if resolved_pre_close is None and resolved_price is not None and raw_change_amount is not None:
+        candidate = resolved_price - raw_change_amount
+        if candidate > 0:
+            resolved_pre_close = candidate
+    if resolved_pre_close is None and resolved_price is not None and raw_change_pct is not None:
+        denominator = 1.0 + raw_change_pct / 100.0
+        if denominator > 0:
+            candidate = resolved_price / denominator
+            if candidate > 0:
+                resolved_pre_close = candidate
+    if resolved_pre_close is None and historical_pre_close and historical_pre_close > 0:
+        resolved_pre_close = historical_pre_close
+
+    resolved_change_amount = raw_change_amount
+    resolved_change_pct = raw_change_pct
+    if resolved_price is not None and resolved_pre_close not in (None, 0):
+        resolved_change_amount = resolved_price - resolved_pre_close
+        resolved_change_pct = resolved_change_amount / resolved_pre_close * 100.0
+
+    return {
+        "price": resolved_price,
+        "pre_close": resolved_pre_close,
+        "change_amount": resolved_change_amount,
+        "change_pct": resolved_change_pct,
+    }
+
+
 class RealtimeSource(Enum):
     """实时行情数据源"""
     EFINANCE = "efinance"           # 东方财富（efinance库）

@@ -36,6 +36,10 @@ from .realtime_types import UnifiedRealtimeQuote, RealtimeSource
 from .us_index_mapping import get_us_index_yf_symbol, is_us_stock_code
 from .yfinance_fundamental_adapter import _safe_float
 from src.services.market_symbol_utils import get_suffix_market, is_suffix_market_symbol
+from src.services.upstream_resilience import (
+    UpstreamCooldownError,
+    get_yahoo_request_gate,
+)
 
 # 可选导入本地股票映射补丁，若缺失则使用空字典兜底
 try:
@@ -206,6 +210,8 @@ class YfinanceFetcher(BaseFetcher):
         logger.debug(f"调用 yfinance.download({yf_code}, {start_date}, {end_date})")
 
         try:
+            gate = get_yahoo_request_gate()
+            gate.before_request()
             # 使用 yfinance 下载数据
             df = yf.download(
                 tickers=yf_code,
@@ -229,6 +235,7 @@ class YfinanceFetcher(BaseFetcher):
             return df
 
         except Exception as e:
+            get_yahoo_request_gate().record_error(e)
             if isinstance(e, DataFetchError):
                 raise
             raise DataFetchError(f"Yahoo Finance 获取数据失败: {e}") from e
@@ -318,9 +325,15 @@ class YfinanceFetcher(BaseFetcher):
         Returns:
             行情字典，失败时返回 None
         """
+        gate = get_yahoo_request_gate()
+        gate.before_request()
         ticker = yf.Ticker(yf_code)
         # 取近两日数据以计算涨跌幅
-        hist = ticker.history(period='2d')
+        try:
+            hist = ticker.history(period='2d')
+        except Exception as exc:
+            gate.record_error(exc)
+            raise
         if hist.empty:
             return None
         today_row = hist.iloc[-1]
@@ -788,6 +801,7 @@ class YfinanceFetcher(BaseFetcher):
             logger.info(f"[Yfinance] 获取美股指数 {user_code} 实时行情成功: 价格={price}")
             return quote
         except Exception as e:
+            get_yahoo_request_gate().record_error(e)
             logger.warning(f"[Yfinance] 获取美股指数 {user_code} 实时行情失败: {e}")
             return None
 
@@ -805,6 +819,15 @@ class YfinanceFetcher(BaseFetcher):
             UnifiedRealtimeQuote 对象，获取失败返回 None
         """
         import yfinance as yf
+
+        yahoo_gate = get_yahoo_request_gate()
+        try:
+            yahoo_gate.before_request()
+        except UpstreamCooldownError as exc:
+            logger.info("[Yfinance] 跳过 %s：%s", stock_code, exc)
+            if self._is_us_stock(stock_code):
+                return self._get_us_stock_quote_from_stooq(stock_code)
+            return None
 
         # 美股指数：使用映射（SPX -> ^GSPC）
         yf_symbol, index_name = get_us_index_yf_symbol(stock_code)
@@ -937,6 +960,7 @@ class YfinanceFetcher(BaseFetcher):
             return quote
 
         except Exception as e:
+            yahoo_gate.record_error(e)
             if self._is_us_stock(stock_code):
                 logger.warning(f"[Yfinance] 获取美股 {stock_code} 实时行情失败: {e}，尝试 Stooq 兜底")
                 return self._get_us_stock_quote_from_stooq(stock_code)

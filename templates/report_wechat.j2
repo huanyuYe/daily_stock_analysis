@@ -63,10 +63,13 @@
 
 {% set sniper = battle.get('sniper_points', {}) if battle else {} %}
 {% if sniper.ideal_buy or sniper.stop_loss or sniper.take_profit %}
+{% set plan_mode = battle.get('plan_mode', '') %}
+{% set neutral_plan = plan_mode in ['conditional_watch', 'holding_risk'] or e.display_action in ['hold', 'watch', 'avoid', 'alert'] %}
+{% set exit_plan = plan_mode == 'exit_only' or e.display_action in ['reduce', 'sell'] %}
 {% set ns = namespace(parts=[]) %}
-{% if sniper.ideal_buy %}{% set ns.parts = ns.parts + ['🎯' ~ labels.ideal_buy_label ~ ':' ~ (sniper.ideal_buy|string)[:15]] %}{% endif %}
-{% if sniper.stop_loss %}{% set ns.parts = ns.parts + ['🛑' ~ labels.stop_loss_label ~ ':' ~ (sniper.stop_loss|string)[:15]] %}{% endif %}
-{% if sniper.take_profit %}{% set ns.parts = ns.parts + ['🎊' ~ labels.take_profit_label ~ ':' ~ (sniper.take_profit|string)[:15]] %}{% endif %}
+{% if sniper.ideal_buy and not exit_plan %}{% set ns.parts = ns.parts + ['🎯' ~ (labels.conditional_entry_label if neutral_plan else labels.ideal_buy_label) ~ ':' ~ (sniper.ideal_buy|string)[:15]] %}{% endif %}
+{% if sniper.stop_loss %}{% set ns.parts = ns.parts + ['🛑' ~ (labels.holding_risk_label if neutral_plan else labels.stop_loss_label) ~ ':' ~ (sniper.stop_loss|string)[:15]] %}{% endif %}
+{% if sniper.take_profit %}{% set ns.parts = ns.parts + ['🎊' ~ (labels.exit_reference_label if exit_plan else (labels.holding_target_label if neutral_plan else labels.take_profit_label)) ~ ':' ~ (sniper.take_profit|string)[:15]] %}{% endif %}
 {{ ns.parts|join(' | ') }}
 {% endif %}
 

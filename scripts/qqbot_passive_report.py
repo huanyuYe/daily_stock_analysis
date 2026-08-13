@@ -17,6 +17,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
+from src.schemas.decision_action import normalize_decision_action
+
 
 DEFAULT_RETENTION_DAYS = 7
 DEFAULT_MAX_CHARS = 12000
@@ -272,15 +274,51 @@ def _extract_guardrail(section: str) -> str:
     )
 
 
-def _extract_plan(section: str) -> str:
+def _action_bucket(action: str) -> str:
+    normalized = normalize_decision_action(action)
+    if normalized in {"buy", "add"}:
+        return "buy"
+    if normalized in {"reduce", "sell"}:
+        return "sell"
+    return "watch"
+
+
+def _action_icon(action: str) -> str:
+    normalized = normalize_decision_action(action)
+    if normalized in {"buy", "add"}:
+        return "🟢"
+    if normalized in {"reduce", "sell"}:
+        return "🔴"
+    if normalized in {"avoid", "alert"}:
+        return "⚠️"
+    if normalized == "hold":
+        return "🟡"
+    return "⚪"
+
+
+def _extract_plan(section: str, *, action: str) -> str:
     plan_section = _extract_subsection(section, "作战计划")
     points = []
-    labels = (
-        ("理想买入点", "理想"),
-        ("次优买入点", "次优"),
-        ("止损位", "止损"),
-        ("目标位", "目标"),
-    )
+    bucket = _action_bucket(action)
+    if bucket == "buy":
+        labels = (
+            ("理想买入点", "理想"),
+            ("次优买入点", "次优"),
+            ("止损位", "止损"),
+            ("目标位", "目标"),
+        )
+    elif bucket == "sell":
+        labels = (
+            ("止损位", "风险线"),
+            ("目标位", "退出参考"),
+        )
+    else:
+        labels = (
+            ("理想买入点", "条件入场"),
+            ("次优买入点", "次级条件"),
+            ("止损位", "持仓风控"),
+            ("目标位", "持仓目标"),
+        )
     for source_label, short_label in labels:
         value = _extract_table_row(plan_section, source_label)
         if value != "未提供":
@@ -345,7 +383,10 @@ def _parse_digests(content: str) -> list[StockDigest]:
                 sections[match.group("code")],
                 "观察条件",
             ),
-            plan=_extract_plan(sections[match.group("code")]),
+            plan=_extract_plan(
+                sections[match.group("code")],
+                action=_clean_markdown(match.group("action")),
+            ),
             position=_extract_field(
                 sections[match.group("code")],
                 "仓位建议",
@@ -373,12 +414,10 @@ def _render_digests(
     report_date: str,
     market_status: str,
 ) -> str:
-    action_counts: dict[str, int] = {}
-    for item in digests:
-        action_counts[item.action] = action_counts.get(item.action, 0) + 1
-    buy_count = action_counts.get("买入", 0)
-    wait_count = action_counts.get("观望", 0)
-    sell_count = len(digests) - buy_count - wait_count
+    buckets = [_action_bucket(item.action) for item in digests]
+    buy_count = buckets.count("buy")
+    wait_count = buckets.count("watch")
+    sell_count = buckets.count("sell")
     lines = [
         f"# 🎯 {report_date} 决策仪表盘",
         "",
@@ -391,9 +430,8 @@ def _render_digests(
         "## 📊 分析结果摘要",
         "",
     ]
-    action_icons = {"买入": "🟢", "观望": "⚪"}
     for item in digests:
-        icon = action_icons.get(item.action, "🔴")
+        icon = _action_icon(item.action)
         lines.append(
             f"{icon} **{item.name}({item.code})**: {item.action}"
             f" | 评分 {item.score} | {item.trend}"
@@ -401,7 +439,7 @@ def _render_digests(
     lines.extend(["", "---"])
 
     for index, item in enumerate(digests, start=1):
-        icon = action_icons.get(item.action, "🔴")
+        icon = _action_icon(item.action)
         lines.extend(
             [
                 "",

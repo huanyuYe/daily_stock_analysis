@@ -136,6 +136,10 @@ def build_decision_signal_payload_from_report(
     if stock_event_summary:
         metadata["stock_event_summary"] = stock_event_summary
     metadata["holding_state"] = _extract_holding_state(portfolio_context)
+    battle_plan = _as_mapping(dashboard.get("battle_plan"))
+    plan_mode = str(battle_plan.get("plan_mode") or "").strip()
+    if plan_mode:
+        metadata["plan_mode"] = plan_mode
 
     payload: Dict[str, Any] = {
         "stock_code": raw_code,

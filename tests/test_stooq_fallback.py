@@ -4,6 +4,7 @@ from unittest.mock import patch, MagicMock, PropertyMock
 
 from data_provider.yfinance_fetcher import YfinanceFetcher
 from data_provider.realtime_types import RealtimeSource
+from src.services.upstream_resilience import get_yahoo_request_gate
 
 try:
     import yfinance  # noqa: F401
@@ -15,6 +16,7 @@ except Exception:
 
 class TestStooqFallback(unittest.TestCase):
     def setUp(self):
+        get_yahoo_request_gate().reset()
         self.fetcher = YfinanceFetcher()
 
     @patch('data_provider.yfinance_fetcher.urlopen')
@@ -77,6 +79,21 @@ class TestStooqFallback(unittest.TestCase):
             self.assertIsNotNone(quote)
             self.assertEqual(quote.price, 900.0)
             mock_stooq.assert_called_once_with("NVDA")
+
+    @unittest.skipUnless(HAS_YFINANCE, "yfinance is required for this test")
+    @patch('yfinance.Ticker')
+    def test_rate_limit_opens_shared_cooldown_and_skips_next_yahoo_call(self, mock_ticker_class):
+        first_ticker = MagicMock()
+        type(first_ticker).fast_info = PropertyMock(side_effect=Exception("Too Many Requests"))
+        first_ticker.history.side_effect = Exception("Too Many Requests")
+        mock_ticker_class.return_value = first_ticker
+
+        with patch.object(self.fetcher, '_get_us_stock_quote_from_stooq', return_value=None) as mock_stooq:
+            self.assertIsNone(self.fetcher.get_realtime_quote("AAPL"))
+            self.assertIsNone(self.fetcher.get_realtime_quote("MSFT"))
+
+        self.assertEqual(mock_ticker_class.call_count, 1)
+        self.assertEqual(mock_stooq.call_count, 2)
 
 
 if __name__ == '__main__':

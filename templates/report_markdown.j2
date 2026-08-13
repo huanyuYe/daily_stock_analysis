@@ -224,14 +224,17 @@
 
 {% set sniper = battle.get('sniper_points', {}) %}
 {% if sniper %}
+{% set plan_mode = battle.get('plan_mode', '') %}
+{% set neutral_plan = plan_mode in ['conditional_watch', 'holding_risk'] or e.display_action in ['hold', 'watch', 'avoid', 'alert'] %}
+{% set exit_plan = plan_mode == 'exit_only' or e.display_action in ['reduce', 'sell'] %}
 **📍 {{ labels.action_points_heading }}**
 
 | {{ labels.action_points_heading }} | {{ labels.current_price_label }} |
 |---------|------|
-| 🎯 {{ labels.ideal_buy_label }} | {{ clean_sniper(sniper.get('ideal_buy')) }} |
-| 🔵 {{ labels.secondary_buy_label }} | {{ clean_sniper(sniper.get('secondary_buy')) }} |
-| 🛑 {{ labels.stop_loss_label }} | {{ clean_sniper(sniper.get('stop_loss')) }} |
-| 🎊 {{ labels.take_profit_label }} | {{ clean_sniper(sniper.get('take_profit')) }} |
+{% if not exit_plan %}| 🎯 {{ labels.conditional_entry_label if neutral_plan else labels.ideal_buy_label }} | {{ clean_sniper(sniper.get('ideal_buy')) }} |
+| 🔵 {{ labels.secondary_conditional_entry_label if neutral_plan else labels.secondary_buy_label }} | {{ clean_sniper(sniper.get('secondary_buy')) }} |
+{% endif %}| 🛑 {{ labels.holding_risk_label if neutral_plan else labels.stop_loss_label }} | {{ clean_sniper(sniper.get('stop_loss')) }} |
+| 🎊 {{ labels.exit_reference_label if exit_plan else (labels.holding_target_label if neutral_plan else labels.take_profit_label) }} | {{ clean_sniper(sniper.get('take_profit')) }} |
 {% endif %}
 
 {% set position = battle.get('position_strategy', {}) %}

@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 
@@ -19,6 +20,13 @@ import requests
 from data_provider.base import normalize_stock_code
 from src.config import Config, get_config
 from src.core.trading_calendar import get_market_for_stock
+from src.services.upstream_resilience import (
+    PersistentJsonCache,
+    UpstreamRequestGate,
+    get_hkex_request_gate,
+    get_sec_request_gate,
+    is_retryable_http_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +41,7 @@ _FAILURE_CACHE_TTL_SECONDS = 60
 _CACHE_LOCK = threading.RLock()
 _BUNDLE_CACHE: Dict[str, tuple[float, "RegulatoryDisclosureBundle"]] = {}
 _SEC_MAPPING_CACHE: tuple[float, Dict[str, str]] = (0.0, {})
+_SEC_MAPPING_FAILURE_RETRY_AT: tuple[float, str] = (0.0, "")
 
 _SEC_FORMS_FOR_FACTS = frozenset({"10-K", "10-Q", "20-F", "40-F", "6-K"})
 _SEC_FACT_METRICS = (
@@ -236,10 +245,39 @@ class RegulatoryDisclosureService:
         config: Optional[Config] = None,
         session: Optional[requests.Session] = None,
         now_provider=None,
+        persistent_cache_dir: Optional[Path] = None,
+        sec_request_gate: Optional[UpstreamRequestGate] = None,
+        hkex_request_gate: Optional[UpstreamRequestGate] = None,
+        sleep_fn=time.sleep,
     ) -> None:
         self.config = config or get_config()
         self.session = session or requests.Session()
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
+        self._persistent_cache = (
+            None
+            if session is not None and persistent_cache_dir is None
+            else PersistentJsonCache("regulatory", cache_dir=persistent_cache_dir)
+        )
+        # Unit/integration callers commonly inject an in-memory session; keep
+        # those deterministic unless they explicitly inject a gate as well.
+        self._sec_request_gate = sec_request_gate or (
+            None if session is not None else get_sec_request_gate()
+        )
+        self._hkex_request_gate = hkex_request_gate or (
+            None if session is not None else get_hkex_request_gate()
+        )
+        if self._sec_request_gate is not None:
+            self._sec_request_gate.min_interval_seconds = max(
+                0.0,
+                float(getattr(self.config, "regulatory_sec_request_min_interval_sec", 0.35)),
+            )
+        if self._hkex_request_gate is not None:
+            self._hkex_request_gate.min_interval_seconds = max(
+                0.0,
+                float(getattr(self.config, "regulatory_hkex_request_min_interval_sec", 1.0)),
+            )
+        self._sleep = sleep_fn
+        self._request_context = threading.local()
 
     def fetch(
         self,
@@ -282,10 +320,37 @@ class RegulatoryDisclosureService:
         if cached is not None:
             return cached
 
+        self._request_context.stale_warnings = []
+
         if market == "us":
             bundle = self._fetch_sec(code, stock_name, as_of, safe_max, safe_days)
         else:
             bundle = self._fetch_hkex(code, stock_name, as_of, safe_max, safe_days)
+        stale_warnings = list(getattr(self._request_context, "stale_warnings", []) or [])
+        if stale_warnings:
+            source_status = dict(bundle.source_status)
+            for warning in stale_warnings:
+                if "sec_ticker_mapping" in warning:
+                    source_status["sec_ticker_mapping"] = "stale_last_good"
+                elif "sec_submissions" in warning:
+                    source_status["sec_submissions"] = "stale_last_good"
+                elif "sec_companyfacts" in warning:
+                    source_status["sec_companyfacts"] = "stale_last_good"
+                elif "hkex_prefix" in warning:
+                    source_status["hkex_stock_mapping"] = "stale_last_good"
+                elif "hkex_search" in warning:
+                    source_status["hkexnews"] = "stale_last_good"
+            bundle = RegulatoryDisclosureBundle(
+                stock_code=bundle.stock_code,
+                stock_name=bundle.stock_name,
+                market=bundle.market,
+                as_of=bundle.as_of,
+                status="degraded" if bundle.status == "available" else bundle.status,
+                filings=bundle.filings,
+                company_facts=bundle.company_facts,
+                source_status=source_status,
+                warnings=tuple(dict.fromkeys([*bundle.warnings, *stale_warnings])),
+            )
         self._put_cached(cache_key, bundle)
         return bundle
 
@@ -351,9 +416,7 @@ class RegulatoryDisclosureService:
             if stock_id:
                 start = (as_of.date() - timedelta(days=lookback_days)).strftime("%Y%m%d")
                 end = as_of.date().strftime("%Y%m%d")
-                response = self.session.post(
-                    _HKEX_SEARCH_URL,
-                    data={
+                search_data = {
                         "lang": "EN",
                         "category": "0",
                         "market": "SEHK",
@@ -366,12 +429,18 @@ class RegulatoryDisclosureService:
                         "from": start,
                         "to": end,
                         "MB-Daterange": "0",
-                    },
+                    }
+                html = self._request_text_cached(
+                    namespace=f"hkex_search:{normalized_code}:{start}:{end}",
+                    method="POST",
+                    url=_HKEX_SEARCH_URL,
+                    data=search_data,
                     headers=self._hkex_headers(),
-                    timeout=self._timeout(),
+                    gate=self._hkex_request_gate,
+                    fresh_ttl_seconds=15 * 60,
+                    stale_ttl_seconds=24 * 60 * 60,
                 )
-                response.raise_for_status()
-                filings = self._parse_hkex_html(response.text, normalized_code, stock_id, as_of)[:max_filings]
+                filings = self._parse_hkex_html(html, normalized_code, stock_id, as_of)[:max_filings]
                 statuses["hkexnews"] = "success" if filings else "empty"
             else:
                 statuses["hkexnews"] = "unavailable"
@@ -382,12 +451,31 @@ class RegulatoryDisclosureService:
         return self._bundle(code, stock_name, "hk", as_of, filings, [], statuses, warnings)
 
     def _resolve_cik(self, ticker: str) -> Optional[str]:
-        global _SEC_MAPPING_CACHE
+        global _SEC_MAPPING_CACHE, _SEC_MAPPING_FAILURE_RETRY_AT
         now = time.monotonic()
         with _CACHE_LOCK:
             if _SEC_MAPPING_CACHE[1] and now - _SEC_MAPPING_CACHE[0] < 24 * 60 * 60:
                 return _SEC_MAPPING_CACHE[1].get(ticker.upper())
-        payload = self._get_json(_SEC_TICKER_URL)
+            retry_at, failure_label = _SEC_MAPPING_FAILURE_RETRY_AT
+            if retry_at > now:
+                raise RuntimeError(
+                    f"SEC ticker mapping cooldown active: {failure_label or 'upstream failure'}"
+                )
+        try:
+            payload = self._get_json(_SEC_TICKER_URL)
+        except Exception as exc:
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+            if status_code == 403:
+                cooldown_seconds = 30 * 60
+            elif status_code == 429:
+                cooldown_seconds = 5 * 60
+            else:
+                cooldown_seconds = 60
+            label = f"HTTP {status_code}" if isinstance(status_code, int) else type(exc).__name__
+            with _CACHE_LOCK:
+                _SEC_MAPPING_FAILURE_RETRY_AT = (now + cooldown_seconds, label)
+            raise
         fields = payload.get("fields") or []
         mapping: Dict[str, str] = {}
         try:
@@ -407,18 +495,22 @@ class RegulatoryDisclosureService:
                 mapping[symbol] = cik
         with _CACHE_LOCK:
             _SEC_MAPPING_CACHE = (now, mapping)
+            _SEC_MAPPING_FAILURE_RETRY_AT = (0.0, "")
         return mapping.get(ticker.upper())
 
     def _resolve_hkex_stock_id(self, stock_code: str) -> Optional[str]:
-        response = self.session.get(
-            _HKEX_PREFIX_URL,
+        text = self._request_text_cached(
+            namespace=f"hkex_prefix:{stock_code}",
+            method="GET",
+            url=_HKEX_PREFIX_URL,
             params={"callback": "callback", "lang": "EN", "type": "A", "name": stock_code, "market": "SEHK"},
             headers=self._hkex_headers(),
-            timeout=self._timeout(),
+            gate=self._hkex_request_gate,
+            fresh_ttl_seconds=24 * 60 * 60,
+            stale_ttl_seconds=7 * 24 * 60 * 60,
         )
-        response.raise_for_status()
-        match = re.search(r"^[^(]*\((.*)\)\s*;?\s*$", response.text.strip(), re.DOTALL)
-        payload = json.loads(match.group(1) if match else response.text)
+        match = re.search(r"^[^(]*\((.*)\)\s*;?\s*$", text.strip(), re.DOTALL)
+        payload = json.loads(match.group(1) if match else text)
         for item in payload.get("stockInfo") or []:
             code_value = str(item.get("code") or item.get("stockCode") or "").strip()
             if code_value and re.sub(r"\D", "", code_value).zfill(5) != stock_code:
@@ -434,12 +526,150 @@ class RegulatoryDisclosureService:
             "Accept": "application/json",
             "Accept-Encoding": "gzip, deflate",
         }
-        response = self.session.get(url, headers=headers, timeout=self._timeout())
-        response.raise_for_status()
-        payload = response.json()
+        if url == _SEC_TICKER_URL:
+            fresh_ttl = 24 * 60 * 60
+            stale_ttl = 7 * 24 * 60 * 60
+            namespace = "sec_ticker_mapping"
+        elif "/companyfacts/" in url:
+            fresh_ttl = 6 * 60 * 60
+            stale_ttl = 24 * 60 * 60
+            namespace = f"sec_companyfacts:{url.rsplit('/', 1)[-1]}"
+        else:
+            fresh_ttl = 30 * 60
+            stale_ttl = 24 * 60 * 60
+            namespace = f"sec_submissions:{url.rsplit('/', 1)[-1]}"
+        payload = self._request_json_cached(
+            namespace=namespace,
+            url=url,
+            headers=headers,
+            gate=self._sec_request_gate,
+            fresh_ttl_seconds=fresh_ttl,
+            stale_ttl_seconds=stale_ttl,
+        )
         if not isinstance(payload, dict):
             raise ValueError("upstream response is not an object")
         return payload
+
+    def _request_json_cached(
+        self,
+        *,
+        namespace: str,
+        url: str,
+        headers: Dict[str, str],
+        gate: Optional[UpstreamRequestGate],
+        fresh_ttl_seconds: int,
+        stale_ttl_seconds: int,
+    ) -> Dict[str, Any]:
+        cached = (
+            self._persistent_cache.get(namespace, max_age_seconds=fresh_ttl_seconds)
+            if self._persistent_cache is not None
+            else None
+        )
+        if cached is not None and isinstance(cached[0], dict):
+            return dict(cached[0])
+
+        def request() -> Dict[str, Any]:
+            response = self.session.get(url, headers=headers, timeout=self._timeout())
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("upstream response is not an object")
+            return payload
+
+        try:
+            payload = self._run_request_with_retry(request, gate=gate)
+            if self._persistent_cache is not None:
+                self._persistent_cache.put(namespace, payload)
+            return payload
+        except Exception:
+            stale = (
+                self._persistent_cache.get(namespace, max_age_seconds=stale_ttl_seconds)
+                if self._persistent_cache is not None
+                else None
+            )
+            if stale is None or not isinstance(stale[0], dict):
+                raise
+            self._record_stale_warning(namespace, stale[1])
+            return dict(stale[0])
+
+    def _request_text_cached(
+        self,
+        *,
+        namespace: str,
+        method: str,
+        url: str,
+        headers: Dict[str, str],
+        gate: Optional[UpstreamRequestGate],
+        fresh_ttl_seconds: int,
+        stale_ttl_seconds: int,
+        params: Optional[Dict[str, Any]] = None,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        cached = (
+            self._persistent_cache.get(namespace, max_age_seconds=fresh_ttl_seconds)
+            if self._persistent_cache is not None
+            else None
+        )
+        if cached is not None and isinstance(cached[0], str):
+            return cached[0]
+
+        def request() -> str:
+            if method == "POST":
+                response = self.session.post(
+                    url,
+                    data=data,
+                    headers=headers,
+                    timeout=self._timeout(),
+                )
+            else:
+                response = self.session.get(
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=self._timeout(),
+                )
+            response.raise_for_status()
+            return str(response.text)
+
+        try:
+            text = self._run_request_with_retry(request, gate=gate)
+            if self._persistent_cache is not None:
+                self._persistent_cache.put(namespace, text)
+            return text
+        except Exception:
+            stale = (
+                self._persistent_cache.get(namespace, max_age_seconds=stale_ttl_seconds)
+                if self._persistent_cache is not None
+                else None
+            )
+            if stale is None or not isinstance(stale[0], str):
+                raise
+            self._record_stale_warning(namespace, stale[1])
+            return stale[0]
+
+    def _run_request_with_retry(
+        self,
+        operation,
+        *,
+        gate: Optional[UpstreamRequestGate],
+    ):
+        attempts = max(1, int(getattr(self.config, "regulatory_retry_max", 2)))
+        last_error: Optional[Exception] = None
+        for attempt in range(attempts):
+            try:
+                return gate.call(operation) if gate is not None else operation()
+            except Exception as exc:
+                last_error = exc
+                if attempt + 1 >= attempts or not is_retryable_http_error(exc):
+                    raise
+                self._sleep(min(2.0 ** attempt, 4.0))
+        assert last_error is not None
+        raise last_error
+
+    def _record_stale_warning(self, namespace: str, age_seconds: float) -> None:
+        warnings = list(getattr(self._request_context, "stale_warnings", []) or [])
+        warnings.append(f"stale_last_good:{namespace}:age_seconds={int(age_seconds)}")
+        self._request_context.stale_warnings = warnings
 
     def _timeout(self) -> float:
         return max(1.0, min(float(getattr(self.config, "regulatory_fetch_timeout_sec", 8.0)), 30.0))
@@ -700,10 +930,11 @@ def _safe_int(value: Any) -> Optional[int]:
 
 
 def reset_regulatory_disclosure_cache() -> None:
-    global _SEC_MAPPING_CACHE
+    global _SEC_MAPPING_CACHE, _SEC_MAPPING_FAILURE_RETRY_AT
     with _CACHE_LOCK:
         _BUNDLE_CACHE.clear()
         _SEC_MAPPING_CACHE = (0.0, {})
+        _SEC_MAPPING_FAILURE_RETRY_AT = (0.0, "")
 
 
 __all__ = [

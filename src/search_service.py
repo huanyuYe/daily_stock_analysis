@@ -1837,11 +1837,16 @@ class SearXNGSearchProvider(BaseSearchProvider):
     PUBLIC_INSTANCES_POOL_LIMIT = 20
     PUBLIC_INSTANCES_MAX_ATTEMPTS = 3
     PUBLIC_INSTANCES_TIMEOUT_SECONDS = 5
+    PUBLIC_RATE_LIMIT_COOLDOWN_SECONDS = 5 * 60
+    PUBLIC_ACCESS_DENIED_COOLDOWN_SECONDS = 30 * 60
+    PUBLIC_TRANSIENT_COOLDOWN_SECONDS = 60
     SELF_HOSTED_TIMEOUT_SECONDS = 10
 
     _public_instances_cache: Optional[Tuple[float, List[str]]] = None
     _public_instances_stale_retry_after: float = 0.0
     _public_instances_lock = threading.Lock()
+    _penalized_instances: Dict[str, float] = {}
+    _penalized_instances_lock = threading.Lock()
 
     def __init__(self, base_urls: Optional[List[str]] = None, *, use_public_instances: bool = False):
         normalized_base_urls = [url.rstrip("/") for url in (base_urls or []) if url.strip()]
@@ -2011,6 +2016,43 @@ class SearXNGSearchProvider(BaseSearchProvider):
         ordered = pool[start:] + pool[:start]
         return ordered[:max_attempts]
 
+    @classmethod
+    def _public_penalty_seconds(cls, error_message: Optional[str]) -> float:
+        message = str(error_message or "").lower()
+        if any(marker in message for marker in ("too many requests", "http 429", "429 |")):
+            return float(cls.PUBLIC_RATE_LIMIT_COOLDOWN_SECONDS)
+        if any(
+            marker in message
+            for marker in ("http 418", "forbidden", "browser verification", "settings.yml")
+        ):
+            return float(cls.PUBLIC_ACCESS_DENIED_COOLDOWN_SECONDS)
+        if any(
+            marker in message
+            for marker in ("http 5", "请求超时", "timed out", "timeout", "json", "响应格式无效")
+        ):
+            return float(cls.PUBLIC_TRANSIENT_COOLDOWN_SECONDS)
+        return 0.0
+
+    @classmethod
+    def _penalize_public_instance(cls, base_url: str, error_message: Optional[str]) -> None:
+        seconds = cls._public_penalty_seconds(error_message)
+        if seconds <= 0:
+            return
+        with cls._penalized_instances_lock:
+            cls._penalized_instances[base_url] = max(
+                cls._penalized_instances.get(base_url, 0.0),
+                time.time() + seconds,
+            )
+
+    @classmethod
+    def _filter_available_public_instances(cls, pool: List[str]) -> List[str]:
+        now = time.time()
+        with cls._penalized_instances_lock:
+            expired = [url for url, until in cls._penalized_instances.items() if until <= now]
+            for url in expired:
+                cls._penalized_instances.pop(url, None)
+            return [url for url in pool if cls._penalized_instances.get(url, 0.0) <= now]
+
     def _do_search(  # type: ignore[override]
         self,
         query: str,
@@ -2161,13 +2203,18 @@ class SearXNGSearchProvider(BaseSearchProvider):
             empty_error = "SearXNG 未配置可用实例"
         elif self._use_public_instances:
             public_instances = self._get_public_instances()
+            available_instances = self._filter_available_public_instances(public_instances)
             candidates = self._rotate_candidates(
-                public_instances,
-                max_attempts=min(len(public_instances), self.PUBLIC_INSTANCES_MAX_ATTEMPTS),
+                available_instances,
+                max_attempts=min(len(available_instances), self.PUBLIC_INSTANCES_MAX_ATTEMPTS),
             )
             retry_enabled = False
             timeout = self.PUBLIC_INSTANCES_TIMEOUT_SECONDS
-            empty_error = "未获取到可用的公共 SearXNG 实例"
+            empty_error = (
+                "公共 SearXNG 实例均在失败冷却中"
+                if public_instances and not available_instances
+                else "未获取到可用的公共 SearXNG 实例"
+            )
         else:
             candidates = []
             retry_enabled = False
@@ -2207,6 +2254,8 @@ class SearXNGSearchProvider(BaseSearchProvider):
                 return response
 
             errors.append(f"{base_url}: {response.error_message or '未知错误'}")
+            if self._use_public_instances:
+                self._penalize_public_instance(base_url, response.error_message)
             logger.warning("[%s] 实例 %s 搜索失败: %s", self.name, base_url, response.error_message)
 
         elapsed = time.time() - start_time

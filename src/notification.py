@@ -1216,11 +1216,20 @@ class NotificationService(
             candidate_label = "模型估算 PoP 超过阈值的合约"
             source_note = "聚合单源数据；PoP 不是历史胜率或收益保证。"
 
+        if view.get("source_id") == "futu_opend_options":
+            source_note = {
+                "en": "Read-only delayed Futu OpenD market data; PoP is not a historical win rate or return guarantee.",
+                "ko": "Futu OpenD 읽기 전용 지연 시세이며 PoP는 과거 승률 또는 수익 보장이 아닙니다.",
+                "zh": "Futu OpenD 只读延迟行情；PoP 不是历史胜率或收益保证。",
+            }.get(report_language, "Futu OpenD 只读延迟行情；PoP 不是历史胜率或收益保证。")
+        expiry_gap = view.get("expiry_gap_days")
+        expiry_gap_text = f"{expiry_gap}d" if expiry_gap is not None else "N/A"
+
         report_lines.extend([
             f"### 🧾 {view['title']}",
             f"- {earnings_label}: {view.get('earnings_date') or 'N/A'} | "
             f"{expiry_label}: {view.get('expiry_date') or 'N/A'} "
-            f"(gap {view.get('expiry_gap_days') if view.get('expiry_gap_days') is not None else 'N/A'}d)",
+            f"(gap {expiry_gap_text})",
             f"- {underlying_label}: {view.get('underlying_price') or 'N/A'} / "
             f"{view.get('underlying_change_pct') if view.get('underlying_change_pct') is not None else 'N/A'}% | "
             f"{flow_label}: {view.get('call_volume', 0)}/{view.get('put_volume', 0)} | "

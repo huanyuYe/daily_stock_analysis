@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Run one read-only Futu-portfolio market analysis and push its fresh QQ report."""
+"""Analyze Futu holdings plus configured watchlist symbols and push a fresh report."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -55,6 +56,22 @@ _PHASE_LABELS = {
     "intraday": "盘中",
     "postmarket": "盘后",
 }
+DEFAULT_TARGET_DURATION_SECONDS = 20 * 60
+
+
+def _summarize_child_output(stdout: str, stderr: str) -> dict[str, int]:
+    """Return non-sensitive counters from the captured analysis log."""
+
+    combined = f"{stdout or ''}\n{stderr or ''}".lower()
+    patterns = {
+        "rate_limit": r"too many requests|rate.?limit|\b429\b",
+        "timeout": r"timed out|请求超时|\btimeout\b",
+        "earnings_options_failed": r"earnings/options fetch failed|earnings/options fetch timed out",
+        "sec_failed": r"sec (?:ticker mapping|submissions|companyfacts) failed",
+        "hkex_failed": r"hkexnews disclosure search failed",
+        "search_failed": r"\[情报搜索\].*搜索失败",
+    }
+    return {name: len(re.findall(pattern, combined)) for name, pattern in patterns.items()}
 
 
 def parse_profile(value: str) -> MarketAnalysisProfile:
@@ -127,12 +144,15 @@ def run_and_push(
     project_root: Path,
     reports_dir: Path,
     timeout_seconds: int,
+    target_duration_seconds: int = DEFAULT_TARGET_DURATION_SECONDS,
     portfolio_loader: Callable[[], list[str]] | None = None,
+    watchlist_loader: Callable[[], list[str]] | None = None,
     market_phase_loader: Callable[[str], object] | None = None,
     command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     pusher: Callable[[str], dict[str, object]] = push_content,
 ) -> dict[str, object]:
-    """Load positions read-only, analyze one market/phase, and push only fresh output."""
+    """Load holdings/watchlist read-only, analyze one phase, and push fresh output."""
+    run_started = time.monotonic()
     if market_phase_loader is None:
         market_phase_loader = infer_market_phase
 
@@ -156,15 +176,23 @@ def run_and_push(
         from src.brokers.futu.portfolio import load_futu_stock_codes
 
         portfolio_loader = load_futu_stock_codes
+    if watchlist_loader is None:
+        from src.config import get_config
+
+        watchlist_loader = lambda: list(get_config().stock_list)
 
     portfolio_codes = portfolio_loader()
-    stock_codes = filter_market_stock_codes(portfolio_codes, profile.market)
+    watchlist_codes = watchlist_loader()
+    portfolio_market_codes = filter_market_stock_codes(portfolio_codes, profile.market)
+    watchlist_market_codes = filter_market_stock_codes(watchlist_codes, profile.market)
+    stock_codes = list(portfolio_market_codes)
+    stock_codes.extend(code for code in watchlist_market_codes if code not in stock_codes)
     if not stock_codes:
         return {
             "success": True,
             "skipped": True,
             "profile": profile.name,
-            "reason": "no_target_market_futu_holdings",
+            "reason": "no_target_market_holdings_or_watchlist",
         }
 
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -173,8 +201,6 @@ def run_and_push(
         retention_days=DEFAULT_RETENTION_DAYS,
     )
     previous_mtime = previous.stat().st_mtime_ns if previous else 0
-    started_at_ns = time.time_ns()
-
     command = [
         sys.executable,
         str(project_root / "main.py"),
@@ -193,6 +219,7 @@ def run_and_push(
         text=True,
         timeout=timeout_seconds,
     )
+    analysis_duration_seconds = time.monotonic() - run_started
     if completed.returncode != 0:
         error = (completed.stderr or completed.stdout or "").strip()
         raise RuntimeError(
@@ -209,7 +236,14 @@ def run_and_push(
             f"{profile.name} analysis completed without an aggregate report"
         )
     latest_mtime = latest.stat().st_mtime_ns
-    if latest_mtime <= previous_mtime or latest_mtime < started_at_ns:
+    # ``previous_mtime`` is the authoritative freshness guard.  Comparing the
+    # report mtime with a nanosecond wall-clock sample as well is unreliable on
+    # filesystems whose timestamp resolution is coarser than ``time.time_ns``
+    # (observed on the Linux deployment host), and can reject a report that the
+    # child process has just created.  If no retained report existed before the
+    # child ran, ``find_latest_report`` returning a file afterwards is already
+    # sufficient evidence that it is new.
+    if latest_mtime <= previous_mtime:
         raise RuntimeError(
             f"{profile.name} analysis did not create or update an aggregate report; "
             "refusing to push stale content"
@@ -221,14 +255,26 @@ def run_and_push(
         f"{summary}"
     )
     delivery = pusher(content)
+    total_duration_seconds = time.monotonic() - run_started
+    target_seconds = max(1, int(target_duration_seconds))
     return {
         "success": True,
         "skipped": False,
         "profile": profile.name,
         "stock_count": len(stock_codes),
+        "portfolio_stock_count": len(portfolio_market_codes),
+        "watchlist_stock_count": len(watchlist_market_codes),
         "report": str(latest),
         "report_mtime_ns": latest_mtime,
         "delivery": delivery,
+        "analysis_duration_seconds": round(analysis_duration_seconds, 3),
+        "total_duration_seconds": round(total_duration_seconds, 3),
+        "target_duration_seconds": target_seconds,
+        "within_target_duration": total_duration_seconds <= target_seconds,
+        "upstream_diagnostics": _summarize_child_output(
+            completed.stdout or "",
+            completed.stderr or "",
+        ),
     }
 
 
@@ -243,6 +289,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-root", type=Path, default=project_root)
     parser.add_argument("--reports-dir", type=Path)
     parser.add_argument("--timeout", type=int, default=4 * 60 * 60)
+    parser.add_argument(
+        "--target-duration",
+        type=int,
+        default=DEFAULT_TARGET_DURATION_SECONDS,
+        help="report delivery SLO in seconds; records compliance without dropping data",
+    )
     return parser.parse_args()
 
 
@@ -263,6 +315,7 @@ def main() -> int:
         project_root=project_root,
         reports_dir=reports_dir,
         timeout_seconds=args.timeout,
+        target_duration_seconds=args.target_duration,
     )
     print(json.dumps(result, ensure_ascii=False))
     return 0

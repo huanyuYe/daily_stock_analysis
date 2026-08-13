@@ -209,6 +209,14 @@ then verifies that the aggregate report was created or updated during that run.
 It refuses to push stale content when analysis fails, produces no report, or
 skips a non-trading day.
 
+For backward compatibility the newest A-share report remains at
+`reports/report_<date>.md`, while every successful run is also archived below
+`reports/cn/<premarket|intraday|postmarket>/`. Midday states such as
+`午间休市` and `临近收盘` map to `intraday`, so the three daily runs no longer
+overwrite the only retrievable copy. The wrapper also reports whether total
+delivery time met its 1200-second SLO; this is observational and never removes
+report fields or terminates an otherwise healthy analysis.
+
 The production timers in `scripts/` use Asia/Shanghai time on weekdays:
 
 - premarket: 08:15, one hour before the opening call auction;
@@ -222,11 +230,21 @@ avoid duplicate delivery.
 
 HK and US portfolio schedules use
 `scripts/run_market_and_push_qq.py --profile <market>-<phase>`. The script reads
-Futu holdings through the existing query-only portfolio adapter, filters them
-to the requested market, and never calls Futu quote subscription or trading
-APIs. The normal data-provider fallback chain supplies market data, while
+Futu holdings through the existing query-only portfolio adapter, unions them
+with target-market symbols in `STOCK_LIST`, and preserves holding order while
+deduplicating. This ensures an explicitly watched symbol such as `HK00700`
+remains monitored even when it is not a current Futu position. The wrapper
+never calls Futu quote subscription or trading APIs. The normal data-provider fallback chain supplies market data, while
 reports are isolated below `reports/<market>/<phase>/` before the same
 fresh-report check and official QQ delivery.
+
+Each completed HK/US wrapper result records `analysis_duration_seconds`,
+`total_duration_seconds`, `within_target_duration` and non-sensitive upstream
+failure counters. The default delivery target is 1200 seconds and can be
+changed with `--target-duration`; this is an SLO measurement, not a hard kill
+and does not remove行情、K 线、官方披露、新闻或财报/期权字段。The existing
+subprocess/systemd timeout remains a final safety bound, while upstream request
+spacing and last-good caches handle provider pressure.
 
 The bundled `daily-stock-analysis-qqbot-market@.service` shares the A-share
 `flock`, so constrained hosts run only one market analysis at a time. Its six
@@ -261,3 +279,10 @@ Before enabling them, verify that Futu OpenD is reachable in query-only mode
 and that at least one HK or US holding exists. Longbridge credentials and quote
 entitlement are independent from Futu and optional; without them, the normal
 AkShare/YFinance fallbacks remain visible as fallback sources.
+
+The separate [cross-market theme report](cross-market-theme-report.md) reuses
+these fresh phase archives and the same QQ delivery path. Its Beijing-time
+timers run at 09:25 (US-close catalyst mapping) and 16:50 (A/HK-close
+validation). The theme service waits up to 20 minutes for the shared analysis
+lock instead of silently dropping a run, and it refuses to push when the
+required same-session report or same-day morning evidence snapshot is absent.

@@ -17,6 +17,30 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     @patch.object(Config, "_parse_stock_email_groups", return_value=[])
+    def test_cross_market_theme_config_is_bounded_and_configurable(
+        self, _mock_parse_stock_email_groups, _mock_parse_litellm_yaml, _mock_setup_env
+    ):
+        with patch.dict(
+            os.environ,
+            {
+                "STOCK_LIST": "hk00700,002409",
+                "CROSS_MARKET_THEME_CONFIG_PATH": "config/custom-themes.json",
+                "CROSS_MARKET_THEME_NEWS_WINDOW_HOURS": "48",
+                "CROSS_MARKET_THEME_PROXY_REQUEST_INTERVAL_SEC": "0.75",
+                "CROSS_MARKET_THEME_MAX_NEWS_PER_THEME": "4",
+            },
+            clear=True,
+        ):
+            config = Config._load_from_env()
+
+        self.assertEqual(config.cross_market_theme_config_path, "config/custom-themes.json")
+        self.assertEqual(config.cross_market_theme_news_window_hours, 48)
+        self.assertEqual(config.cross_market_theme_proxy_request_interval_sec, 0.75)
+        self.assertEqual(config.cross_market_theme_max_news_per_theme, 4)
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    @patch.object(Config, "_parse_stock_email_groups", return_value=[])
     def test_share_image_social_branding_is_optional_and_configurable(
         self, _mock_parse_stock_email_groups, _mock_parse_litellm_yaml, _mock_setup_env
     ):
@@ -572,6 +596,13 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
                 "NEWS_INTEL_MAX_ITEMS_PER_SOURCE": "75",
                 "NEWS_INTEL_AUTO_FETCH_ENABLED": "yes",
                 "NEWSNOW_BASE_URL": "https://newsnow.example.com/base/",
+                "REGULATORY_RETRY_MAX": "3",
+                "REGULATORY_SEC_REQUEST_MIN_INTERVAL_SEC": "0.75",
+                "REGULATORY_HKEX_REQUEST_MIN_INTERVAL_SEC": "1.5",
+                "EARNINGS_OPTIONS_REQUEST_MIN_INTERVAL_SEC": "2.5",
+                "EARNINGS_OPTIONS_RATE_LIMIT_COOLDOWN_SEC": "120",
+                "EARNINGS_OPTIONS_LAST_GOOD_TTL_SEC": "28800",
+                "EARNINGS_OPTIONS_FUTU_FALLBACK_ENABLED": "true",
             },
             clear=True,
         ):
@@ -585,6 +616,13 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         self.assertEqual(config.news_intel_max_items_per_source, 75)
         self.assertTrue(config.news_intel_auto_fetch_enabled)
         self.assertEqual(config.newsnow_base_url, "https://newsnow.example.com/base")
+        self.assertEqual(config.regulatory_retry_max, 3)
+        self.assertEqual(config.regulatory_sec_request_min_interval_sec, 0.75)
+        self.assertEqual(config.regulatory_hkex_request_min_interval_sec, 1.5)
+        self.assertEqual(config.earnings_options_request_min_interval_sec, 2.5)
+        self.assertEqual(config.earnings_options_rate_limit_cooldown_sec, 120)
+        self.assertEqual(config.earnings_options_last_good_ttl_sec, 28800)
+        self.assertTrue(config.earnings_options_futu_fallback_enabled)
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])

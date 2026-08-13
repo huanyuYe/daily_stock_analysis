@@ -98,7 +98,12 @@ class MarketQQScheduleTest(unittest.TestCase):
                     _foreign_report(),
                     encoding="utf-8",
                 )
-                return subprocess.CompletedProcess(command, 0, "", "")
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    "earnings/options fetch failed: Too Many Requests",
+                    "SEC submissions failed: timeout",
+                )
 
             pushed: list[str] = []
             result = run_and_push(
@@ -107,6 +112,7 @@ class MarketQQScheduleTest(unittest.TestCase):
                 reports_dir=reports_dir,
                 timeout_seconds=60,
                 portfolio_loader=lambda: ["600519", "HK00700", "AAPL"],
+                watchlist_loader=lambda: [],
                 market_phase_loader=lambda _market: "premarket",
                 command_runner=runner,
                 pusher=lambda content: pushed.append(content) or {"success": True},
@@ -114,6 +120,8 @@ class MarketQQScheduleTest(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(result["stock_count"], 1)
+        self.assertEqual(result["portfolio_stock_count"], 1)
+        self.assertEqual(result["watchlist_stock_count"], 0)
         self.assertIn("--stocks", captured["command"])
         self.assertIn("AAPL", captured["command"])
         self.assertNotIn("HK00700", captured["command"])
@@ -124,6 +132,11 @@ class MarketQQScheduleTest(unittest.TestCase):
         self.assertEqual(len(pushed), 1)
         self.assertTrue(pushed[0].startswith("# 美股 · 盘前分析"))
         self.assertIn("AAPL", pushed[0])
+        self.assertTrue(result["within_target_duration"])
+        self.assertEqual(result["target_duration_seconds"], 20 * 60)
+        self.assertEqual(result["upstream_diagnostics"]["earnings_options_failed"], 1)
+        self.assertEqual(result["upstream_diagnostics"]["sec_failed"], 1)
+        self.assertGreaterEqual(result["upstream_diagnostics"]["rate_limit"], 1)
 
     def test_no_target_holdings_skips_without_analysis_or_push(self):
         calls: list[str] = []
@@ -133,6 +146,7 @@ class MarketQQScheduleTest(unittest.TestCase):
             reports_dir=Path("/tmp/reports"),
             timeout_seconds=60,
             portfolio_loader=lambda: ["AAPL"],
+            watchlist_loader=lambda: [],
             market_phase_loader=lambda _market: "intraday",
             command_runner=lambda *args, **kwargs: calls.append("analysis"),
             pusher=lambda content: calls.append("push"),
@@ -149,6 +163,7 @@ class MarketQQScheduleTest(unittest.TestCase):
             reports_dir=Path("/tmp/reports"),
             timeout_seconds=60,
             portfolio_loader=portfolio_loader,
+            watchlist_loader=Mock(side_effect=AssertionError("must not read watchlist")),
             market_phase_loader=lambda _market: "non_trading",
             command_runner=Mock(side_effect=AssertionError("must not run")),
             pusher=Mock(side_effect=AssertionError("must not push")),
@@ -165,6 +180,7 @@ class MarketQQScheduleTest(unittest.TestCase):
             reports_dir=Path("/tmp/reports"),
             timeout_seconds=60,
             portfolio_loader=Mock(side_effect=AssertionError("must not query Futu")),
+            watchlist_loader=Mock(side_effect=AssertionError("must not read watchlist")),
             market_phase_loader=lambda _market: "unknown",
             command_runner=Mock(side_effect=AssertionError("must not run")),
             pusher=Mock(side_effect=AssertionError("must not push")),
@@ -172,6 +188,44 @@ class MarketQQScheduleTest(unittest.TestCase):
 
         self.assertTrue(result["skipped"])
         self.assertEqual(result["reason"], "market_calendar_unavailable")
+
+    def test_run_unions_futu_holdings_with_configured_watchlist(self):
+        profile = parse_profile("hk-premarket")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            reports_dir = project_root / "reports" / "hk" / "premarket"
+            captured: dict[str, object] = {}
+
+            def runner(command, **_kwargs):
+                captured["command"] = command
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                (reports_dir / "report_20260731.md").write_text(
+                    _foreign_report("HK09988").replace("美股", "港股"),
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch(
+                "scripts.run_market_and_push_qq.build_qq_summary",
+                return_value="summary",
+            ):
+                result = run_and_push(
+                    profile,
+                    project_root=project_root,
+                    reports_dir=reports_dir,
+                    timeout_seconds=60,
+                    portfolio_loader=lambda: ["HK09988", "AAPL"],
+                    watchlist_loader=lambda: ["hk00700", "HK09988", "600519"],
+                    market_phase_loader=lambda _market: "premarket",
+                    command_runner=runner,
+                    pusher=lambda _content: {"success": True},
+                )
+
+        stocks_arg = captured["command"][captured["command"].index("--stocks") + 1]
+        self.assertEqual(stocks_arg, "HK09988,HK00700")
+        self.assertEqual(result["stock_count"], 2)
+        self.assertEqual(result["portfolio_stock_count"], 1)
+        self.assertEqual(result["watchlist_stock_count"], 2)
 
     def test_report_directory_can_be_isolated_by_environment(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(

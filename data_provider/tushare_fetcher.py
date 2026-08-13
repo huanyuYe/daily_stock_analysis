@@ -17,6 +17,7 @@ TushareFetcher - 备用数据源 1 (Priority 2)
 import json as _json
 import logging
 import re
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, List, Dict, Any
@@ -165,6 +166,8 @@ class TushareFetcher(BaseFetcher):
         self._api: Optional[object] = None  # Tushare API 实例
         self.date_list: Optional[List[str]] = None  # 交易日列表缓存（倒序，最新日期在前）
         self._date_list_end: Optional[str] = None  # 缓存对应的截止日期，用于跨日刷新
+        self._unavailable_sector_apis: set[str] = set()
+        self._sector_api_state_lock = threading.Lock()
 
         # 尝试初始化 API
         self._init_api()
@@ -1116,31 +1119,50 @@ class TushareFetcher(BaseFetcher):
         if not start_date:
             return None
 
-        # 优先同花顺接口
-        logger.info("[Tushare] ts.pro_api().moneyflow_ind_ths 获取板块排行(同花顺)...")
-        try:
-            df = self._call_api_with_rate_limit("moneyflow_ind_ths", trade_date=start_date)
-            if df is not None and not df.empty:
-                change_col = 'pct_change'
-                name = 'industry'
-                if change_col in df.columns:
-                    return _get_rank_top_n(df, change_col, name, n)
-        except Exception as e:
-            logger.warning(f"[Tushare] 获取同花顺行业板块涨跌榜失败: {e} 尝试东财接口")
+        def permission_denied(exc: Exception) -> bool:
+            message = str(exc)
+            return "没有接口(" in message or "无权限" in message or "访问权限" in message
+
+        def is_unavailable(api_name: str) -> bool:
+            with self._sector_api_state_lock:
+                return api_name in self._unavailable_sector_apis
+
+        def mark_unavailable(api_name: str) -> None:
+            with self._sector_api_state_lock:
+                self._unavailable_sector_apis.add(api_name)
+
+        # 优先同花顺接口。明确的权限拒绝在当前进程内只探测一次；
+        # 后续调用直接进入仍可用的 fallback，不把静态套餐限制当成瞬时故障重试。
+        if not is_unavailable("moneyflow_ind_ths"):
+            logger.info("[Tushare] ts.pro_api().moneyflow_ind_ths 获取板块排行(同花顺)...")
+            try:
+                df = self._call_api_with_rate_limit("moneyflow_ind_ths", trade_date=start_date)
+                if df is not None and not df.empty:
+                    change_col = 'pct_change'
+                    name = 'industry'
+                    if change_col in df.columns:
+                        return _get_rank_top_n(df, change_col, name, n)
+            except Exception as e:
+                if permission_denied(e):
+                    mark_unavailable("moneyflow_ind_ths")
+                logger.warning(f"[Tushare] 获取同花顺行业板块涨跌榜失败: {e} 尝试东财接口")
 
         # 同花顺接口失败，降级尝试东财接口
-        logger.info("[Tushare] ts.pro_api().moneyflow_ind_dc 获取板块排行(东财)...")
-        try:
-            df = self._call_api_with_rate_limit("moneyflow_ind_dc", trade_date=start_date)
-            if df is not None and not df.empty:
-                df = df[df['content_type'] == '行业']  # 过滤出行业板块
-                change_col = 'pct_change'
-                name = 'name'
-                if change_col in df.columns:
-                    return _get_rank_top_n(df, change_col, name, n)
-        except Exception as e:
-            logger.warning(f"[Tushare] 获取东财行业板块涨跌榜失败: {e}")
-            return None
+        if not is_unavailable("moneyflow_ind_dc"):
+            logger.info("[Tushare] ts.pro_api().moneyflow_ind_dc 获取板块排行(东财)...")
+            try:
+                df = self._call_api_with_rate_limit("moneyflow_ind_dc", trade_date=start_date)
+                if df is not None and not df.empty:
+                    df = df[df['content_type'] == '行业']  # 过滤出行业板块
+                    change_col = 'pct_change'
+                    name = 'name'
+                    if change_col in df.columns:
+                        return _get_rank_top_n(df, change_col, name, n)
+            except Exception as e:
+                if permission_denied(e):
+                    mark_unavailable("moneyflow_ind_dc")
+                logger.warning(f"[Tushare] 获取东财行业板块涨跌榜失败: {e}")
+                return None
         
         # 获取为空或者接口调用失败，返回 None
         return None

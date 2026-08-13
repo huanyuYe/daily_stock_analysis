@@ -5,7 +5,37 @@ import threading
 import time
 import unittest
 
-from data_provider.realtime_types import CircuitBreaker, RealtimeSource, UnifiedRealtimeQuote
+from data_provider.realtime_types import (
+    CircuitBreaker,
+    RealtimeSource,
+    UnifiedRealtimeQuote,
+    resolve_realtime_change_metrics,
+)
+
+
+class RealtimeChangeMetricsTestCase(unittest.TestCase):
+    def test_explicit_quote_pre_close_wins_over_historical_fallback(self):
+        metrics = resolve_realtime_change_metrics(
+            price=44.27,
+            pre_close=48.42,
+            change_pct=-8.57,
+            fallback_pre_close=42.19,
+        )
+
+        self.assertAlmostEqual(metrics["pre_close"], 48.42)
+        self.assertAlmostEqual(metrics["change_amount"], -4.15)
+        self.assertAlmostEqual(metrics["change_pct"], -8.5708, places=3)
+
+    def test_provider_percentage_can_supply_missing_pre_close(self):
+        metrics = resolve_realtime_change_metrics(
+            price=105.0,
+            change_pct=5.0,
+            fallback_pre_close=90.0,
+        )
+
+        self.assertAlmostEqual(metrics["pre_close"], 100.0)
+        self.assertAlmostEqual(metrics["change_amount"], 5.0)
+        self.assertAlmostEqual(metrics["change_pct"], 5.0)
 
 
 class UnifiedRealtimeQuoteMetadataTestCase(unittest.TestCase):

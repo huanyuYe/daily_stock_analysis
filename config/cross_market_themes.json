@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "description": "Cross-market themes selected for the current A/HK watchlist. US proxies are observations, not trading recommendations.",
+  "themes": [
+    {
+      "id": "optical_network",
+      "label": "光通信 / CPO",
+      "keywords": ["光通信", "光模块", "光纤", "光芯片", "硅光", "CPO", "optical", "silicon photonics"],
+      "board_keywords": ["光通信", "通信设备", "CPO", "光模块", "光纤"],
+      "us_proxies": ["LITE", "COHR", "CIEN"],
+      "official_symbols": ["LITE"],
+      "target_symbols": ["600487", "002008", "301489"]
+    },
+    {
+      "id": "memory_storage",
+      "label": "存储芯片 / 高阶封装",
+      "keywords": ["存储", "DRAM", "NAND", "NOR Flash", "HBM", "memory", "advanced packaging", "先进封装"],
+      "board_keywords": ["存储芯片", "存储", "先进封装", "HBM"],
+      "us_proxies": ["MU", "WDC", "STX"],
+      "official_symbols": ["MU"],
+      "target_symbols": ["002409", "688300", "688233", "603690"]
+    },
+    {
+      "id": "semiconductor_materials",
+      "label": "半导体设备与材料",
+      "keywords": ["半导体设备", "半导体材料", "前驱体", "光刻胶", "电子特气", "semiconductor equipment", "wafer fab", "precursor"],
+      "board_keywords": ["半导体设备", "半导体材料", "电子化学品", "光刻胶", "电子特气"],
+      "us_proxies": ["AMAT", "LRCX", "KLAC"],
+      "official_symbols": ["AMAT"],
+      "target_symbols": ["002409", "688300", "688233", "603690", "688368"]
+    },
+    {
+      "id": "ai_cloud_apps",
+      "label": "AI 云与应用",
+      "keywords": ["AI云", "云计算", "算力租赁", "大模型", "推理", "AI cloud", "cloud computing", "inference", "hyperscaler"],
+      "board_keywords": ["云服务", "云计算", "AI应用", "互联网服务", "大模型"],
+      "us_proxies": ["CRWV", "NBIS", "ORCL"],
+      "official_symbols": ["ORCL"],
+      "target_symbols": ["HK00700", "HK09988", "HK03896", "HK02533", "HK01879", "688368"]
+    },
+    {
+      "id": "compute_power_thermal",
+      "label": "算力基础设施 / 液冷散热",
+      "keywords": ["算力基础设施", "数据中心", "液冷", "散热", "电源管理", "data center", "liquid cooling", "thermal", "power management"],
+      "board_keywords": ["液冷服务器", "数据中心", "电源设备", "散热", "算力"],
+      "us_proxies": ["VRT", "ETN", "DELL"],
+      "official_symbols": ["VRT"],
+      "target_symbols": ["301489", "600487", "600089", "688368"]
+    },
+    {
+      "id": "power_nuclear_grid",
+      "label": "电力 / 核能 / 电网",
+      "keywords": ["核电", "核能", "电网", "电力设备", "算力电力", "nuclear", "power grid", "electricity demand"],
+      "board_keywords": ["核电", "核能", "电网设备", "电力设备", "电力"],
+      "us_proxies": ["OKLO", "CEG", "VST"],
+      "official_symbols": ["OKLO"],
+      "target_symbols": ["600089"]
+    },
+    {
+      "id": "battery_lithium",
+      "label": "锂资源 / 电池储能",
+      "keywords": ["锂", "锂电池", "电池材料", "储能", "lithium", "battery materials", "energy storage"],
+      "board_keywords": ["锂矿", "能源金属", "锂电池", "电池", "储能"],
+      "us_proxies": ["ALB", "SQM", "TSLA"],
+      "official_symbols": ["ALB"],
+      "target_symbols": ["002460", "603906"]
+    },
+    {
+      "id": "industrial_automation",
+      "label": "工业自动化 / 工程机械",
+      "keywords": ["工业自动化", "工程机械", "液压", "机器人", "manufacturing automation", "industrial machinery", "robotics"],
+      "board_keywords": ["工业自动化", "工程机械", "液压", "机器人"],
+      "us_proxies": ["ROK", "CAT", "DE"],
+      "official_symbols": ["ROK"],
+      "target_symbols": ["601100"]
+    }
+  ]
+}

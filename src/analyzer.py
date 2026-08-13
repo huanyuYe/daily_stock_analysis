@@ -103,6 +103,7 @@ from src.market_context import detect_market, get_market_role, get_market_guidel
 from src.services.daily_market_context import format_daily_market_context_prompt_section
 from src.market_phase_prompt import format_market_phase_prompt_section
 from src.market_structure_prompt import format_market_structure_prompt_section
+from data_provider.realtime_types import resolve_realtime_change_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -2066,6 +2067,8 @@ class GeminiAnalyzer:
 - 不得仅因为单日涨跌或评分跨线就在“买入/卖出”之间剧烈切换。
 - 操作建议必须同时参考价格位置（支撑/压力位）、量能/筹码、主力资金流向和风险事件。
 - 股价位于支撑与压力之间、资金流不明确时，优先输出“持有/震荡/观望/洗盘观察”等可执行的中性建议；`decision_type` 仍保持 `hold`。
+- 只有明确知道用户已持仓时才能输出 `action=hold`；持仓未知或空仓时，中性结论必须输出 `action=watch`。
+- `action=hold/watch/avoid/alert` 时，建仓策略必须写成条件触发后的参考计划，不得直接建议当前开仓或加仓；`action=reduce/sell` 时不得保留建仓或加仓计划。
 - 只有在接近支撑确认或有效突破压力，且资金流/量价配合时，才能给出买入；接近压力且资金流出时不得追买。
 - 只有在跌破关键支撑、主力资金持续流出或风险显著放大时，才能给出卖出/减仓。
 - 必须输出 `dashboard.phase_decision` 七字段；盘中/午休/临近收盘要给出当前动作、观察条件和下一次检查点。
@@ -2252,6 +2255,8 @@ class GeminiAnalyzer:
 - 不得仅因为单日涨跌或评分跨线就在“买入/卖出”之间剧烈切换。
 - 操作建议必须同时参考价格位置（支撑/压力位）、量能/筹码、主力资金流向和风险事件。
 - 股价位于支撑与压力之间、资金流不明确时，优先输出“持有/震荡/观望/洗盘观察”等可执行的中性建议；`decision_type` 仍保持 `hold`。
+- 只有明确知道用户已持仓时才能输出 `action=hold`；持仓未知或空仓时，中性结论必须输出 `action=watch`。
+- `action=hold/watch/avoid/alert` 时，建仓策略必须写成条件触发后的参考计划，不得直接建议当前开仓或加仓；`action=reduce/sell` 时不得保留建仓或加仓计划。
 - 只有在接近支撑确认或有效突破压力，且资金流/量价配合时，才能给出买入；接近压力且资金流出时不得追买。
 - 只有在跌破关键支撑、主力资金持续流出或风险显著放大时，才能给出卖出/减仓。
 - 必须输出 `dashboard.phase_decision` 七字段；盘中/午休/临近收盘要给出当前动作、观察条件和下一次检查点。
@@ -4273,36 +4278,48 @@ class GeminiAnalyzer:
         realtime = context.get('realtime', {}) or {}
         yesterday = context.get('yesterday', {}) or {}
 
-        prev_close = yesterday.get('close')
-        close = today.get('close')
-        high = today.get('high')
-        low = today.get('low')
+        def prefer(primary: Any, fallback: Any) -> Any:
+            return primary if primary is not None else fallback
+
+        close = prefer(realtime.get('price'), today.get('close'))
+        open_price = prefer(realtime.get('open_price'), today.get('open'))
+        high = prefer(realtime.get('high'), today.get('high'))
+        low = prefer(realtime.get('low'), today.get('low'))
+        metrics = resolve_realtime_change_metrics(
+            price=close,
+            pre_close=prefer(realtime.get('pre_close'), today.get('pre_close')),
+            change_amount=prefer(
+                realtime.get('change_amount'),
+                today.get('change_amount'),
+            ),
+            change_pct=prefer(realtime.get('change_pct'), today.get('pct_chg')),
+            fallback_pre_close=yesterday.get('close'),
+        )
+        prev_close = metrics['pre_close']
+        change_amount = metrics['change_amount']
+        pct_chg = metrics['change_pct']
 
         amplitude = None
-        change_amount = None
         if prev_close not in (None, 0) and high is not None and low is not None:
             try:
                 amplitude = (float(high) - float(low)) / float(prev_close) * 100
             except (TypeError, ValueError, ZeroDivisionError):
                 amplitude = None
-        if prev_close is not None and close is not None:
-            try:
-                change_amount = float(close) - float(prev_close)
-            except (TypeError, ValueError):
-                change_amount = None
+        if amplitude is None:
+            amplitude = prefer(realtime.get('amplitude'), today.get('amplitude'))
 
         snapshot = {
             "date": context.get('date', '未知'),
             "close": self._format_price(close),
-            "open": self._format_price(today.get('open')),
+            "open": self._format_price(open_price),
             "high": self._format_price(high),
             "low": self._format_price(low),
             "prev_close": self._format_price(prev_close),
-            "pct_chg": self._format_percent(today.get('pct_chg')),
+            "pct_chg": self._format_percent(pct_chg),
             "change_amount": self._format_price(change_amount),
             "amplitude": self._format_percent(amplitude),
-            "volume": self._format_volume(today.get('volume')),
-            "amount": self._format_amount(today.get('amount')),
+            "volume": self._format_volume(prefer(realtime.get('volume'), today.get('volume'))),
+            "amount": self._format_amount(prefer(realtime.get('amount'), today.get('amount'))),
         }
 
         if realtime:

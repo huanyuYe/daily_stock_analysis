@@ -4,6 +4,11 @@
 from __future__ import annotations
 
 import unittest
+import json
+import requests
+import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -23,6 +28,16 @@ class _Response:
 
     def json(self):
         return self._payload
+
+
+class _HttpErrorResponse(_Response):
+    def __init__(self, status_code: int):
+        super().__init__(payload={})
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        response = SimpleNamespace(status_code=self.status_code)
+        raise requests.HTTPError(f"HTTP {self.status_code}", response=response)
 
 
 class _Session:
@@ -124,6 +139,26 @@ class RegulatoryDisclosureServiceTestCase(unittest.TestCase):
             "unit-test contact=test@example.com",
         )
 
+    def test_sec_mapping_http_403_is_not_repeated_for_every_symbol(self):
+        session = _Session([
+            ("company_tickers_exchange", _HttpErrorResponse(403)),
+        ])
+        service = RegulatoryDisclosureService(
+            config=self.config,
+            session=session,
+            now_provider=lambda: self.now,
+        )
+
+        first = service.fetch("AAPL", "Apple")
+        second = service.fetch("MSFT", "Microsoft")
+
+        mapping_calls = [
+            call for call in session.calls if "company_tickers_exchange" in call[1]
+        ]
+        self.assertEqual(len(mapping_calls), 1)
+        self.assertEqual(first.source_status["sec_ticker_mapping"], "failed")
+        self.assertEqual(second.source_status["sec_ticker_mapping"], "failed")
+
     def test_sec_companyfacts_reject_future_filing_and_uses_latest_known(self):
         payload = {
             "facts": {
@@ -187,6 +222,61 @@ class RegulatoryDisclosureServiceTestCase(unittest.TestCase):
         ).fetch("600519", "贵州茅台")
         self.assertEqual(bundle.status, "unsupported")
         self.assertEqual(session.calls, [])
+
+    def test_sec_uses_marked_last_good_payload_when_fresh_request_fails(self):
+        mapping = {
+            "fields": ["cik", "name", "ticker", "exchange"],
+            "data": [[320193, "Apple Inc.", "AAPL", "Nasdaq"]],
+        }
+        submissions = {
+            "filings": {
+                "recent": {
+                    "accessionNumber": ["0000320193-26-000001"],
+                    "filingDate": ["2026-08-01"],
+                    "reportDate": ["2026-06-30"],
+                    "acceptanceDateTime": ["2026-08-01T12:30:00Z"],
+                    "form": ["10-Q"],
+                    "primaryDocument": ["aapl.htm"],
+                    "primaryDocDescription": ["Quarterly report"],
+                }
+            }
+        }
+        companyfacts = {"facts": {}}
+        session = _Session([
+            ("company_tickers_exchange", _Response(payload=mapping)),
+            ("submissions/CIK", _Response(payload=submissions)),
+            ("companyfacts/CIK", _Response(payload=companyfacts)),
+        ])
+
+        with TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            first = RegulatoryDisclosureService(
+                config=self.config,
+                session=session,
+                now_provider=lambda: self.now,
+                persistent_cache_dir=cache_dir,
+            ).fetch("AAPL", "Apple")
+            self.assertEqual(first.status, "available")
+
+            for cache_file in (cache_dir / "regulatory").glob("*.json"):
+                payload = json.loads(cache_file.read_text(encoding="utf-8"))
+                payload["stored_at"] = time.time() - 7 * 60 * 60
+                cache_file.write_text(json.dumps(payload), encoding="utf-8")
+
+            reset_regulatory_disclosure_cache()
+            degraded = RegulatoryDisclosureService(
+                config=self.config,
+                session=_Session([]),
+                now_provider=lambda: self.now,
+                persistent_cache_dir=cache_dir,
+            ).fetch("AAPL", "Apple")
+
+        self.assertEqual(degraded.status, "degraded")
+        self.assertEqual(len(degraded.filings), 1)
+        self.assertEqual(degraded.source_status["sec_submissions"], "stale_last_good")
+        self.assertEqual(degraded.source_status["sec_companyfacts"], "stale_last_good")
+        self.assertTrue(any(item.startswith("stale_last_good:sec_submissions") for item in degraded.warnings))
+        self.assertTrue(any(item.startswith("stale_last_good:sec_companyfacts") for item in degraded.warnings))
 
 
 if __name__ == "__main__":
