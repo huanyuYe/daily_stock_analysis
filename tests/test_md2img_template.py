@@ -41,7 +41,8 @@ def test_wkhtml_renderer_uses_share_poster_dimensions_and_qr_template():
     assert 'class="poster market"' in html
     assert "项目主页二维码" not in html
     assert "ZhuLinsen/daily_stock_analysis" in html
-    assert "@示例账号" in html
+    assert "<b>小红书</b>@示例账号" in html
+    assert "123456" not in html
     assert options["width"] == 1080
     assert options["disable-smart-width"] == ""
 
@@ -69,7 +70,8 @@ def test_markdown_to_file_renderer_receives_the_same_share_poster(tmp_path, monk
     assert 'class="poster stock"' in captured["html"]
     assert "项目主页二维码" not in captured["html"]
     assert "ZhuLinsen/daily_stock_analysis" in captured["html"]
-    assert "@示例账号" in captured["html"]
+    assert "<b>小红书</b>@示例账号" in captured["html"]
+    assert "123456" not in captured["html"]
 
 
 def test_playwright_renderer_receives_the_same_share_poster(tmp_path, monkeypatch):
@@ -102,6 +104,8 @@ def test_playwright_renderer_receives_the_same_share_poster(tmp_path, monkeypatc
     assert "--full-page" in captured["args"]
     assert 'class="poster stock"' in captured["html"]
     assert "ZhuLinsen/daily_stock_analysis" in captured["html"]
+    assert "<b>小红书</b>@示例账号" in captured["html"]
+    assert "123456" not in captured["html"]
 
 
 def test_config_accepts_playwright_image_engine():

@@ -119,8 +119,8 @@ Discord 长报告发送复用现有分片链路：单条 `content` 运行时不�
 
 配置 `MARKDOWN_TO_IMAGE_CHANNELS` 后，个股分析、聚合报告与大盘复盘会沿用现有通知路由，在转图阶段套用 1080px 宽的品牌分享模板。单只个股按“结论—点位—技术—风险—持仓”生成决策卡，大盘按“信号—指数—宽度—强弱板块—资金观察—重点跟踪—策略—风险”生成复盘卡；多股报告保留聚合布局。底部展示 GitHub 仓库地址、可选的小红书账号区域，以及“仅供研究交流，不构成投资建议”的风险提示。
 
-- 小红书 URL、昵称、ID 与二维码路径可由 `SHARE_IMAGE_XIAOHONGSHU_*` 配置覆盖；全部留空时显示内置二维码和昵称 `@霸天土小豆`，默认不展示数字 ID。二维码转图时嵌入 HTML，不依赖外部图片服务或运行时网络。
-- 模板只展示报告已有的 0–100 评分、八态动作和 `battle_plan.sniper_points` 点位，不生成额外评分或多空占比。`buy/add` 展示入场、止损和目标；`hold/watch/avoid/alert` 将买入点明确标为条件入场参考，将止损和目标标为已有持仓的风控/止盈观察位；`reduce/sell` 不展示开仓或加仓计划。
+- 小红书 URL、昵称、ID 与二维码路径可由 `SHARE_IMAGE_XIAOHONGSHU_*` 配置覆盖；二维码下方只显示昵称，不显示数字 ID。全部留空时显示内置二维码和昵称 `@霸天土小豆`。二维码转图时嵌入 HTML，不依赖外部图片服务或运行时网络。
+- 模板只展示报告已有的 0–100 评分、八态动作和 `battle_plan.sniper_points` 点位，不生成额外评分或多空占比。理想/次优买入点、止损位和目标位使用高对比交易卡片；`buy/add` 展示入场、止损和目标，`hold/watch/avoid/alert` 将买入点明确标为条件入场参考并将止损和目标标为已有持仓的风控/止盈观察位，`reduce/sell` 不展示开仓或加仓计划。
 - QQ 精简报告使用同一八态动作口径归类：`buy/add` 计入买入，`reduce/sell` 计入卖出，其余动作计入中性观察；“持有”不会再因未知标签回退为红色卖出。
 - 结构化字段、缺失值行为、个股/大盘映射和本地预览示例见 [分享图片模板与数据填充](share-images.md)。
 - `wkhtmltoimage`、`markdown-to-file` 与 `playwright` 使用同一份海报 HTML；现有 `MD2IMG_ENGINE`、`MARKDOWN_TO_IMAGE_MAX_CHARS` 和转换失败后回退文本的行为不变。Playwright 模式需先安装 Web 依赖并执行 `npx playwright install chromium`。

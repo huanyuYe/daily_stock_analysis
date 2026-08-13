@@ -166,6 +166,8 @@ class ShareImageBranding:
 
     xiaohongshu_url: str = ""
     xiaohongshu_handle: str = ""
+    # Kept for compatibility with persisted configs. The poster deliberately
+    # renders only the public nickname/handle below the QR code.
     xiaohongshu_id: str = ""
     xiaohongshu_qr_path: str = ""
 
@@ -174,7 +176,6 @@ class ShareImageBranding:
         return any((
             self.xiaohongshu_url.strip(),
             self.xiaohongshu_handle.strip(),
-            self.xiaohongshu_id.strip(),
             self.xiaohongshu_qr_path.strip(),
         ))
 
@@ -187,7 +188,7 @@ def share_image_branding_from_config(config: object) -> ShareImageBranding:
     account_id = str(getattr(config, "share_image_xiaohongshu_id", None) or "").strip()
     qr_path = str(getattr(config, "share_image_xiaohongshu_qr_path", None) or "").strip()
 
-    if not any((url, handle, account_id, qr_path)):
+    if not any((url, handle, qr_path)):
         handle = DEFAULT_XIAOHONGSHU_HANDLE
         qr_path = DEFAULT_XIAOHONGSHU_QR_PATH
 
@@ -1995,11 +1996,8 @@ def _xiaohongshu_card(branding: ShareImageBranding, language: str) -> str:
         return ""
 
     label = _poster_text(language, "xiaohongshu")
-    account_parts = [part for part in (
-        branding.xiaohongshu_handle.strip(),
-        f"ID {branding.xiaohongshu_id.strip()}" if branding.xiaohongshu_id.strip() else "",
-    ) if part]
-    account = " · ".join(account_parts) or branding.xiaohongshu_url.strip()
+    handle = branding.xiaohongshu_handle.strip()
+    account = handle or branding.xiaohongshu_url.strip()
     qr_data_uri = _asset_data_uri(branding.xiaohongshu_qr_path)
     qr_alt = f"{label}二维码" if language == "zh" else f"{label} QR"
     image = (
@@ -2009,9 +2007,8 @@ def _xiaohongshu_card(branding: ShareImageBranding, language: str) -> str:
     url = _safe_web_url(branding.xiaohongshu_url)
     if image and url:
         image = f'<a href="{_escape(url)}">{image}</a>'
-    account_markup = (
-        f'<span><b>{_escape(label)}</b>{(" " + _escape(account)) if account else ""}</span>'
-    )
+    separator = "" if handle.startswith("@") else (" " if account else "")
+    account_markup = f'<span><b>{_escape(label)}</b>{separator}{_escape(account)}</span>'
     if url:
         account_markup = f'<a class="social-link" href="{_escape(url)}">{account_markup}</a>'
     return (

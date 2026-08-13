@@ -45,8 +45,8 @@ def test_stock_share_image_uses_configured_xiaohongshu_branding():
     assert PROJECT_REPOSITORY in html
     assert "小红书二维码" in html
     assert PROJECT_DISPLAY_NAME in html
-    assert XIAOHONGSHU_HANDLE in html
-    assert f"<b>小红书</b> {XIAOHONGSHU_HANDLE} · ID 123456" in html
+    assert f"<b>小红书</b>{XIAOHONGSHU_HANDLE}" in html
+    assert "123456" not in html
     assert 'href="https://example.com/xiaohongshu"' in html
     assert "2026-07-31" in html
     assert html.count("<h1>") == 1
@@ -77,8 +77,8 @@ def test_runtime_branding_defaults_to_bundled_xiaohongshu_qr():
 
     assert html.count('class="qr-frame"') == 1
     assert html.count("data:image/jpeg;base64,") == 1
-    assert f"<b>小红书</b> {DEFAULT_XIAOHONGSHU_HANDLE}" in html
-    assert " · ID " not in html
+    assert f"<b>小红书</b>{DEFAULT_XIAOHONGSHU_HANDLE}" in html
+    assert " ID " not in html
 
 
 def test_runtime_branding_does_not_mix_default_qr_with_custom_identity():
@@ -99,8 +99,8 @@ def test_runtime_branding_does_not_mix_default_qr_with_custom_identity():
         branding=branding,
     )
 
-    assert "@自定义账号" in html
-    assert "ID custom-id" in html
+    assert "<b>小红书</b>@自定义账号" in html
+    assert "custom-id" not in html
     assert "data:image/jpeg;base64," not in html
     assert DEFAULT_XIAOHONGSHU_HANDLE not in html
 

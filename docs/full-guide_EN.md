@@ -58,7 +58,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | Secret Name | Description | Required |
 |------------|------|:----:|
 | `ANSPIRE_API_KEYS` | [Anspire](https://open.anspire.cn/?share_code=QFBC0FYC) API key, one key for popular LLMs and Chinese-optimized web search with free quota for this project | Recommended |
-| `AIHUBMIX_KEY` | [AIHubMix](https://aihubmix.com/?aff=CfMq) API key, one key for multiple model families and a 10% top-up discount for this project | Recommended |
+| `AIHUBMIX_KEY` | [AIHubMix](https://inferera.com/?aff=CfMq) API key, one key for multiple model families and a 10% top-up discount for this project | Recommended |
 | `GEMINI_API_KEY` | Get free key from [Google AI Studio](https://aistudio.google.com/) | Optional |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API Key | Optional |
 | `OPENAI_API_KEY` | OpenAI-compatible API Key (supports DeepSeek, Qwen, etc.) | Optional |
@@ -129,7 +129,6 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `MD2IMG_ENGINE` | Image renderer: `wkhtmltoimage` (default), `markdown-to-file`, or `playwright` | Optional |
 | `SHARE_IMAGE_XIAOHONGSHU_URL` | Xiaohongshu profile URL shown in share images; empty disables the link | Optional |
 | `SHARE_IMAGE_XIAOHONGSHU_HANDLE` | Xiaohongshu nickname shown in share images; when all Xiaohongshu settings are empty, uses bundled nickname `@霸天土小豆` | Optional |
-| `SHARE_IMAGE_XIAOHONGSHU_ID` | Xiaohongshu account ID shown in share images; empty hides the ID | Optional |
 | `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` | QR image path, absolute or relative to the project root; when all Xiaohongshu settings are empty, uses the bundled QR | Optional |
 | `NOTIFICATION_REPORT_CHANNELS` | Report route channels for single-stock, aggregate daily, market review, merged push, and Feishu document success notifications. Empty means all configured channels | Optional |
 | `NOTIFICATION_ALERT_CHANNELS` | Alert route channels for EventMonitor notifications. Empty means all configured channels | Optional |
@@ -233,7 +232,7 @@ Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
 | `LLM_USAGE_HMAC_SECRET` | Secret for LLM usage telemetry message HMACs; leave empty to use a generated local data-dir secret file | - | No |
 | `LLM_USAGE_HMAC_KEY_VERSION` | Version label for the LLM usage HMAC key; update it when rotating the secret | `local-v1` | No |
 | `ANSPIRE_API_KEYS` | [Anspire](https://open.anspire.cn/?share_code=QFBC0FYC) API key, one key for the LLM gateway and search | - | Optional |
-| `AIHUBMIX_KEY` | [AIHubMix](https://aihubmix.com/?aff=CfMq) API key, one key for multiple model families | - | Optional |
+| `AIHUBMIX_KEY` | [AIHubMix](https://inferera.com/?aff=CfMq) API key, one key for multiple model families | - | Optional |
 | `GEMINI_API_KEY` | Google Gemini API Key | - | Optional |
 | `GEMINI_MODEL` | Primary model name (legacy, `LITELLM_MODEL` preferred) | `gemini-3.1-pro-preview` | No |
 | `GEMINI_MODEL_FALLBACK` | Fallback model (legacy) | `gemini-3-flash-preview` | No |

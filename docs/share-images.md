@@ -27,11 +27,10 @@
 ```dotenv
 SHARE_IMAGE_XIAOHONGSHU_URL=https://example.com/my-xiaohongshu
 SHARE_IMAGE_XIAOHONGSHU_HANDLE=@我的账号
-SHARE_IMAGE_XIAOHONGSHU_ID=123456789
 SHARE_IMAGE_XIAOHONGSHU_QR_PATH=assets/my-xiaohongshu-qr.png
 ```
 
-二维码路径支持绝对路径或相对项目根目录路径；冻结桌面后端也会从 PyInstaller 资源目录解析相对路径。账号 URL 只接受 `http://` 或 `https://`。二维码在转图时以内嵌 Data URI 渲染，不依赖运行时网络。未配置 `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` 时，统一回退到随源码和桌面包分发的 `src/assets/share_image/xiaohongshu_qr.jpg`，因此 Web PNG 与桌面 Electron PNG 都会保留二维码。
+二维码路径支持绝对路径或相对项目根目录路径；冻结桌面后端也会从 PyInstaller 资源目录解析相对路径。账号 URL 只接受 `http://` 或 `https://`。二维码在转图时以内嵌 Data URI 渲染，不依赖运行时网络。未配置 `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` 时，统一回退到随源码和桌面包分发的 `src/assets/share_image/xiaohongshu_qr.jpg`，因此 Web PNG 与桌面 Electron PNG 都会保留二维码。二维码下方固定显示小红书昵称，例如 `小红书@霸天土小豆`；历史配置中的数字 ID 不参与分享图渲染。
 
 ## Web 一键分享
 
@@ -151,6 +150,6 @@ png_bytes = markdown_to_image(
 - 涨跌颜色优先使用结构化 payload 持久化的 `color_scheme`，旧记录则从最终报告颜色标记恢复；模板不按市场地区硬编码涨跌色。
 - 分享图中的买入、止损和目标只保留可扫描的价格或“等待企稳”；完整条件始终保留在原报告中。
 - 没有真实价格序列时不绘制伪 K 线；顶部仅保留非数据化的品牌光晕。
-- 小红书 URL、昵称、ID 和二维码路径可由运行时配置覆盖；全部留空时使用内置昵称 `@霸天土小豆` 和仓库内置二维码，默认不展示数字 ID。GitHub 固定展示仓库标识 `ZhuLinsen/daily_stock_analysis`，不生成二维码。
+- 小红书 URL、昵称和二维码路径可由运行时配置覆盖；二维码下只显示昵称，不显示数字 ID。全部留空时使用内置昵称 `@霸天土小豆` 和仓库内置二维码。GitHub 固定展示仓库标识 `ZhuLinsen/daily_stock_analysis`，不生成二维码。
 - 大盘报告在核心模块已成功提取时不重复附加完整 Markdown；额外的详情章节保留在原报告中，分享图只呈现结构化摘要。
 - 图片底部固定说明“AI 生成，仅供研究交流，不构成投资建议”。
