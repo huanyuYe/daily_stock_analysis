@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -26,6 +28,35 @@ from scripts.run_a_share_and_push_qq import (
 )
 def test_detect_a_share_report_phase(label: str, expected: str) -> None:
     assert detect_a_share_report_phase(f"市场状态：A股 · {label}") == expected
+
+
+@pytest.mark.parametrize(
+    ("script_name", "expected_option"),
+    [
+        ("run_a_share_and_push_qq.py", "--analysis-service"),
+        ("qqbot_passive_report.py", "--reports-dir"),
+    ],
+)
+def test_a_share_scripts_bootstrap_project_import_path(
+    script_name: str,
+    expected_option: str,
+) -> None:
+    script = Path(__file__).resolve().parents[1] / "scripts" / script_name
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        completed = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            cwd=tmpdir,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    assert completed.returncode == 0, completed.stderr
+    assert expected_option in completed.stdout
 
 
 def test_archive_a_share_phase_reports_preserves_report_and_fresh_review() -> None:

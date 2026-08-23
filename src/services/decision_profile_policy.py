@@ -142,7 +142,7 @@ def _apply_guardrail(
             violations.append("missing_horizon")
         if not candidate.invalidation and candidate.stop_loss is None:
             violations.append("missing_invalidation_or_stop_loss")
-        if data_quality_level in ("poor", "unknown"):
+        if data_quality_level in ("low", "poor", "unknown"):
             violations.append("insufficient_data_quality")
         if candidate.confidence is None:
             violations.append("missing_confidence")

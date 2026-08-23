@@ -12,10 +12,15 @@ import argparse
 import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterable, Optional
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.schemas.decision_action import normalize_decision_action
 
@@ -404,6 +409,13 @@ def _parse_digests(content: str) -> list[StockDigest]:
         )
         for match in summaries
     ]
+
+
+def extract_report_stock_codes(report_path: Path) -> list[str]:
+    """Return report symbols after validating summary/detail coverage."""
+
+    content = report_path.read_text(encoding="utf-8").strip()
+    return [item.code.strip().upper() for item in _parse_digests(content)]
 
 
 def _render_digests(

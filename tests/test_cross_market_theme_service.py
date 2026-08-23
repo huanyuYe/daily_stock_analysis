@@ -256,6 +256,9 @@ def test_morning_and_close_reports_form_a_same_day_validation_loop():
         ]
         cloud = morning_snapshot["themes"][0]
         assert cloud["evidence_complete"] is True
+        assert cloud["proxies"][0]["fresh_for_report_purpose"] is True
+        assert cloud["proxies"][0]["freshness_basis"]["max_age_hours"] == 30.0
+        assert cloud["proxy_metrics"]["purpose_fresh_count"] == 3
         assert [item["code"] for item in cloud["targets"]] == ["HK00700", "002409"]
         assert cloud["targets"][0]["report_action"] == "持有"
         assert {"ORCL", "HK00700", "ALB"}.issubset(set(regulatory.calls))

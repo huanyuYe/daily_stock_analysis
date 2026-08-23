@@ -54,6 +54,16 @@ class MainPortfolioTest(unittest.TestCase):
 
         runner.assert_called_once_with(config, args, ["600519"])
 
+    def test_analysis_lock_preserves_explicit_analysis_failure(self):
+        with patch.object(main, "run_full_analysis", return_value=False):
+            result = main._run_analysis_with_runtime_scheduler_lock(
+                SimpleNamespace(),
+                SimpleNamespace(),
+                ["600519"],
+            )
+
+        self.assertFalse(result)
+
     def test_run_full_analysis_propagates_futu_portfolio_load_failure(self):
         config = SimpleNamespace()
         args = SimpleNamespace(portfolio="futu")
@@ -232,7 +242,7 @@ class MainPortfolioTest(unittest.TestCase):
         trading_day_filter.assert_not_called()
         self.assertIn("无符合条件的 Futu 持仓", "\n".join(captured.output))
 
-    def test_empty_futu_portfolio_preserves_enabled_auto_backtest(self):
+    def test_empty_futu_portfolio_preserves_enabled_auto_feedback_loops(self):
         args = SimpleNamespace(
             portfolio="futu",
             no_market_review=True,
@@ -251,6 +261,13 @@ class MainPortfolioTest(unittest.TestCase):
             "insufficient": 0,
             "errors": 0,
         }
+        outcome_service = MagicMock()
+        outcome_service.run_outcomes.return_value = {
+            "evaluated": 2,
+            "created": 1,
+            "updated": 1,
+            "skipped": 0,
+        }
         real_import = builtins.__import__
 
         def reject_pipeline_import(name, *args, **kwargs):
@@ -262,6 +279,9 @@ class MainPortfolioTest(unittest.TestCase):
             "src.brokers.futu.portfolio.load_futu_stock_codes",
             return_value=[],
         ), patch(
+            "src.services.decision_signal_outcome_service.DecisionSignalOutcomeService",
+            return_value=outcome_service,
+        ) as outcome_class, patch(
             "src.services.backtest_service.BacktestService",
             return_value=backtest_service,
         ) as backtest_class, patch.object(
@@ -272,6 +292,8 @@ class MainPortfolioTest(unittest.TestCase):
             result = main.run_full_analysis(config, args)
 
         self.assertTrue(result)
+        outcome_class.assert_called_once_with()
+        outcome_service.run_outcomes.assert_called_once_with(limit=200)
         backtest_class.assert_called_once_with()
         backtest_service.run_backtest.assert_called_once_with(
             force=False,

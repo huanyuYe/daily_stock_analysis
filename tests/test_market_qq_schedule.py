@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -18,27 +19,34 @@ from scripts.run_market_and_push_qq import (
 from src.notification import NotificationService
 
 
-def _foreign_report(code: str = "AAPL") -> str:
-    return "\n".join(
-        [
+def _foreign_report(code: str = "AAPL", *additional_codes: str) -> str:
+    codes = (code, *additional_codes)
+    lines = [
             "# 🎯 2026-07-31 决策仪表盘",
             "",
-            "> 共分析 **1** 只股票",
+            f"> 共分析 **{len(codes)}** 只股票",
             "市场状态：美股 · 盘前",
             "## 📊 分析结果摘要",
-            f"⚪ **苹果({code})**: 观望 | 评分 55 | 震荡",
-            "",
-            "---",
-            "",
-            f"## ⚪ 苹果 ({code})",
-            "",
-            "**💭 舆情情绪**: 中性。",
-            "**📊 业绩预期**: 等待确认。",
-            "**📢 最新动态**: 暂无重大事件。",
-            "",
-            "> **一句话决策**: 等待常规交易时段确认。",
-        ]
+    ]
+    lines.extend(
+        f"⚪ **苹果({item})**: 观望 | 评分 55 | 震荡"
+        for item in codes
     )
+    lines.extend(["", "---"])
+    for item in codes:
+        lines.extend(
+            [
+                "",
+                f"## ⚪ 苹果 ({item})",
+                "",
+                "**💭 舆情情绪**: 中性。",
+                "**📊 业绩预期**: 等待确认。",
+                "**📢 最新动态**: 暂无重大事件。",
+                "",
+                "> **一句话决策**: 等待常规交易时段确认。",
+            ]
+        )
+    return "\n".join(lines)
 
 
 class MarketQQScheduleTest(unittest.TestCase):
@@ -117,6 +125,9 @@ class MarketQQScheduleTest(unittest.TestCase):
                 command_runner=runner,
                 pusher=lambda content: pushed.append(content) or {"success": True},
             )
+            manifest_path = Path(result["run_manifest"])
+            manifest_exists = manifest_path.is_file()
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         self.assertTrue(result["success"])
         self.assertEqual(result["stock_count"], 1)
@@ -132,6 +143,9 @@ class MarketQQScheduleTest(unittest.TestCase):
         self.assertEqual(len(pushed), 1)
         self.assertTrue(pushed[0].startswith("# 美股 · 盘前分析"))
         self.assertIn("AAPL", pushed[0])
+        self.assertEqual(result["report_coverage"]["status"], "complete")
+        self.assertTrue(manifest_exists)
+        self.assertEqual(manifest_payload["delivery"]["status"], "delivered")
         self.assertTrue(result["within_target_duration"])
         self.assertEqual(result["target_duration_seconds"], 20 * 60)
         self.assertEqual(result["upstream_diagnostics"]["earnings_options_failed"], 1)
@@ -200,7 +214,7 @@ class MarketQQScheduleTest(unittest.TestCase):
                 captured["command"] = command
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 (reports_dir / "report_20260731.md").write_text(
-                    _foreign_report("HK09988").replace("美股", "港股"),
+                    _foreign_report("HK09988", "HK00700").replace("美股", "港股"),
                     encoding="utf-8",
                 )
                 return subprocess.CompletedProcess(command, 0, "", "")
@@ -226,6 +240,78 @@ class MarketQQScheduleTest(unittest.TestCase):
         self.assertEqual(result["stock_count"], 2)
         self.assertEqual(result["portfolio_stock_count"], 1)
         self.assertEqual(result["watchlist_stock_count"], 2)
+
+    def test_partial_aggregate_report_is_manifested_and_not_pushed(self):
+        profile = parse_profile("us-intraday")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            reports_dir = project_root / "reports" / "us" / "intraday"
+            pushed: list[str] = []
+
+            def runner(command, **_kwargs):
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                (reports_dir / "report_20260731.md").write_text(
+                    _foreign_report("AAPL"),
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with self.assertRaisesRegex(RuntimeError, "aggregate report is incomplete"):
+                run_and_push(
+                    profile,
+                    project_root=project_root,
+                    reports_dir=reports_dir,
+                    timeout_seconds=60,
+                    portfolio_loader=lambda: ["AAPL", "MSFT"],
+                    watchlist_loader=lambda: [],
+                    market_phase_loader=lambda _market: "intraday",
+                    command_runner=runner,
+                    pusher=lambda content: pushed.append(content) or {"success": True},
+                )
+
+            manifest = reports_dir / "report_20260731.run.json"
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+
+        self.assertEqual(pushed, [])
+        self.assertEqual(payload["coverage"]["status"], "partial")
+        self.assertEqual(payload["coverage"]["missing_codes"], ["MSFT"])
+        self.assertEqual(payload["delivery"]["status"], "not_attempted")
+
+    def test_delivery_without_success_confirmation_fails_and_updates_manifest(self):
+        profile = parse_profile("us-postmarket")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            reports_dir = project_root / "reports" / "us" / "postmarket"
+
+            def runner(command, **_kwargs):
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                (reports_dir / "report_20260731.md").write_text(
+                    _foreign_report("AAPL"),
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with self.assertRaisesRegex(RuntimeError, "did not confirm success"):
+                run_and_push(
+                    profile,
+                    project_root=project_root,
+                    reports_dir=reports_dir,
+                    timeout_seconds=60,
+                    portfolio_loader=lambda: ["AAPL"],
+                    watchlist_loader=lambda: [],
+                    market_phase_loader=lambda _market: "postmarket",
+                    command_runner=runner,
+                    pusher=lambda _content: {"success": False, "error": "secret detail"},
+                )
+
+            payload = json.loads(
+                (reports_dir / "report_20260731.run.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(payload["coverage"]["status"], "complete")
+        self.assertEqual(payload["delivery"]["status"], "failed")
+        self.assertEqual(payload["delivery"]["failure_code"], "delivery_not_confirmed")
+        self.assertNotIn("secret", json.dumps(payload))
 
     def test_report_directory_can_be_isolated_by_environment(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(

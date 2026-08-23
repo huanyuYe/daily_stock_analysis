@@ -246,6 +246,18 @@ and does not remove行情、K 线、官方披露、新闻或财报/期权字段�
 subprocess/systemd timeout remains a final safety bound, while upstream request
 spacing and last-good caches handle provider pressure.
 
+Before delivery, the wrapper parses the aggregate report and compares its
+summary/detail symbols with the exact holdings/watchlist union passed to
+`main.py`. It writes `report_YYYYMMDD.run.json` beside the report with expected,
+completed, missing, unexpected and duplicate symbols plus non-sensitive
+upstream counters. The same manifest records delivery as `not_attempted`,
+`delivered`, or `failed`; only an explicit `success=true` response from the QQ
+pusher completes the run, and message IDs or provider error text are not written
+to the manifest. Any parse or coverage mismatch fails the unit and refuses QQ
+delivery even if the child process returned zero. A one-shot `main.py` analysis
+that returns an explicit failure now also exits non-zero through the shared
+runtime lock, so systemd cannot mark a partial run successful.
+
 The bundled `daily-stock-analysis-qqbot-market@.service` shares the A-share
 `flock`, so constrained hosts run only one market analysis at a time. Its six
 timers are:

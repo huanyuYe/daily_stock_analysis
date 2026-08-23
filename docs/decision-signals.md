@@ -137,7 +137,7 @@ Web 在原有“信号表现统计”卡片内提供“保守 / 均衡 / 进取�
 - `refreshed` item 保留不可变的原始创建 provenance（`source_type`、`source_report_id`、`source_agent`、`trigger_source`、`created_at` 等），并沿用 #1756 repository 的两个既有子语义：expired refresh 会更新允许变化的决策字段、有效期和本次 reassess audit metadata；active relaxed dimension-fill 只补齐缺失的 horizon/market phase，保留原 metadata。客户端必须以后端返回 item 为准，不能仅凭 `refreshed` 推断 metadata 已被替换。
 - `guardrail_result` 是机器审计数据，记录 `raw_action`、`final_action`、`passed`、`violations`、`adjustments`、`adjusted`；`warnings` 是用户可读摘要。测试和客户端逻辑应优先依赖 warning 的稳定 `code`，`message` 只用于首版展示。
 - `MIN_ACTIONABLE_CONFIDENCE = 0.5`。所有 `buy/add` 还必须具备 horizon、invalidation 或 stop loss、合法价格关系，且 data quality 不能是 `poor/unknown`；aggressive `buy/add` 额外要求明确 invalidation，且不接受 `long` horizon。
-- 缺失置信度/invalidation 或数据质量不足时，可审计地降级为 `watch`，并记录 `passed=true, adjusted=true`。价格关系互相矛盾时无法在不改写历史快照语义的前提下保存有效计划，因此记录 `passed=false`。
+- 缺失置信度/invalidation 或数据质量为 `low/poor/unknown` 时，可审计地降级为 `watch`，并记录 `passed=true, adjusted=true`。其中 `low` 覆盖 AnalysisContextPack 核心行情、日线或技术块触发的 `limited` 上限。价格关系互相矛盾时无法在不改写历史快照语义的前提下保存有效计划，因此记录 `passed=false`。
 - Preview-only 的 `passed=false` 仍以 HTTP 200 展示，UI 必须突出 `blocked_reason`。Persist 重算得到 `passed=false` 时返回 HTTP 400 `guardrail_blocked`，包含 `blocked_reason` 和结构化 `warnings`，不写库，也不返回 `created=true`。
 - 每次 persist 重算都必须先满足 `guardrail_result.passed=true` 才能进入写入链；`created/refreshed` 的 `item.action` 等于本次 `guardrail_result.final_action`。`existing` 返回原记录及其原始 metadata，不伪造本次 guardrail audit。
 - 默认分析和 lazy backfill 仍只自动生成 `balanced`；用户可显式选择并确认保存 balanced、conservative 或 aggressive，其中 conservative/aggressive 不会自动生成。
@@ -223,8 +223,10 @@ P5 通过 sidecar 表保存用户反馈和后验结果，不扩展 `decision_sig
 
 - `decision_signal_feedback` 保存每个信号最新的 `useful|not_useful` 反馈、可选原因/备注和来源。
 - `decision_signal_outcomes` 按 `(signal_id, horizon, engine_version)` 幂等保存后验评估结果。
-- 当前 `engine_version=decision-signal-v1`。
-- 后验评估只支持日线可验证的 `1d/3d/5d/10d`；`intraday/swing/long`、非方向动作、缺价和 forward bars 不足会写入 `eval_status=unable` 与明确 `unable_reason`。
+- 当前新写入口径为 `engine_version=decision-signal-v2`；既有 v1 行继续保留，通过 `(signal_id, horizon, engine_version)` 与 v2 并存，不静默改写历史统计。
+- v2 支持日线可验证的 `1d/3d/5d/10d`，并支持 `intraday` 在信号过期/收盘后用报告证据中的 `current_price` 对比同一 session 的最终 `StockDaily`。收盘前、最终 bar 未到或缺价会写入可重试 `unable_reason`；`swing/long` 仍不支持。
+- `buy/add -> up`、`hold -> not_down`、`reduce/sell/avoid -> not_up`。`watch/alert` 若报告证据含明确看多/偏强趋势则按 `up` 验证，含明确看空/偏弱趋势则按 `not_up` 验证；震荡或无明确趋势仍为 `non_directional_signal`，不从动作本身猜方向。
+- `BACKTEST_ENABLED=true` 时，每次成功分析结束会先批量推进最多 200 条缺失或可重试的 v2 outcome，再运行原有历史报告回测；两条反馈链均失败隔离，不反向导致已生成报告失败。API `POST /api/v1/decision-signals/outcomes/run` 仍可手动触发和强制重算。
 - 评估时冻结 action、market、market_phase、source_type、source_agent、plan_quality、data_quality_level、holding_state 等统计维度，历史统计不依赖后续 live join。
 
 ## 脱敏与低敏边界

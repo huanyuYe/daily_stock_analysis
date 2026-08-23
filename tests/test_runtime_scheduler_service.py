@@ -23,6 +23,7 @@ from src.services.runtime_scheduler import (
     RUNTIME_SCHEDULER_RUN_IMMEDIATELY_ENV,
     RUNTIME_SCHEDULER_SUPPRESS_START_ENV,
     RuntimeSchedulerService,
+    run_with_global_analysis_lock,
 )
 
 
@@ -87,6 +88,15 @@ class _SynchronousThread(_NoopThread):
 
 
 class RuntimeSchedulerServiceTestCase(unittest.TestCase):
+    def test_global_lock_preserves_explicit_task_failure(self) -> None:
+        result = run_with_global_analysis_lock(
+            lambda _config, _args, _stocks: False,
+            SimpleNamespace(),
+            SimpleNamespace(),
+        )
+
+        self.assertFalse(result)
+
     def test_run_analysis_args_include_workers(self) -> None:
         config = SimpleNamespace(
             schedule_enabled=True,

@@ -31,13 +31,14 @@ from src.storage import (
     DecisionSignalFeedbackRecord,
     DecisionSignalOutcomeRecord,
     DecisionSignalRecord,
+    utc_naive_now,
 )
 from src.utils.sanitize import sanitize_decision_signal_text
 
 
 logger = logging.getLogger(__name__)
 
-DECISION_SIGNAL_OUTCOME_ENGINE_VERSION = "decision-signal-v1"
+DECISION_SIGNAL_OUTCOME_ENGINE_VERSION = "decision-signal-v2"
 SUPPORTED_OUTCOME_HORIZONS = {
     "1d": 1,
     "3d": 3,
@@ -51,6 +52,7 @@ FEEDBACK_VALUES = frozenset({"useful", "not_useful"})
 FEEDBACK_SOURCES = frozenset({"web", "api"})
 HOLDING_STATES = frozenset({"holding", "empty", "unknown"})
 RETRYABLE_UNABLE_REASONS = frozenset({
+    "intraday_session_not_closed",
     "missing_anchor_price",
     "invalid_anchor_price",
     "insufficient_forward_bars",
@@ -399,17 +401,29 @@ class DecisionSignalOutcomeService:
 
     def _evaluate_signal_horizon(self, signal: DecisionSignalRecord, horizon: str) -> Dict[str, Any]:
         base = self._snapshot_fields(signal, horizon)
-        direction = self._direction_for_action(signal.action)
+        direction = self._direction_for_signal(signal)
         if direction is None:
-            return self._unable_fields(base, reason="non_directional_action")
+            return self._unable_fields(base, reason="non_directional_signal")
+
+        anchor_date = self._anchor_date(signal)
+        if anchor_date is None:
+            return self._unable_fields(
+                base,
+                reason="missing_anchor_date",
+                direction_expected=direction,
+            )
+
+        if horizon == "intraday":
+            return self._evaluate_intraday_signal(
+                signal,
+                base=base,
+                direction=direction,
+                anchor_date=anchor_date,
+            )
 
         eval_days = SUPPORTED_OUTCOME_HORIZONS.get(horizon)
         if eval_days is None:
             return self._unable_fields(base, reason="unsupported_horizon", direction_expected=direction)
-
-        anchor_date = self._anchor_date(signal)
-        if anchor_date is None:
-            return self._unable_fields(base, reason="missing_anchor_date", direction_expected=direction)
 
         start_bar = self.stock_repo.get_daily_on_date(code=signal.stock_code, target_date=anchor_date)
         start_price = getattr(start_bar, "close", None)
@@ -462,6 +476,106 @@ class DecisionSignalOutcomeService:
             "min_low": evaluation.get("min_low"),
             "stock_return_pct": evaluation.get("stock_return_pct"),
         }
+
+    def _evaluate_intraday_signal(
+        self,
+        signal: DecisionSignalRecord,
+        *,
+        base: Dict[str, Any],
+        direction: str,
+        anchor_date: date,
+    ) -> Dict[str, Any]:
+        expires_at = signal.expires_at
+        if isinstance(expires_at, datetime) and expires_at > utc_naive_now():
+            return self._unable_fields(
+                base,
+                reason="intraday_session_not_closed",
+                direction_expected=direction,
+                anchor_date=anchor_date,
+                eval_window_days=1,
+            )
+
+        evidence = self._json_loads(signal.evidence_json)
+        start_price = evidence.get("current_price") if isinstance(evidence, dict) else None
+        if not self._is_positive_finite(start_price):
+            return self._unable_fields(
+                base,
+                reason=(
+                    "missing_anchor_price"
+                    if start_price in (None, "")
+                    else "invalid_anchor_price"
+                ),
+                direction_expected=direction,
+                anchor_date=anchor_date,
+                eval_window_days=1,
+                start_price=start_price,
+            )
+
+        end_bar = self.stock_repo.get_daily_on_date(
+            code=signal.stock_code,
+            target_date=anchor_date,
+        )
+        if end_bar is None:
+            return self._unable_fields(
+                base,
+                reason="missing_end_close",
+                direction_expected=direction,
+                anchor_date=anchor_date,
+                eval_window_days=1,
+                start_price=float(start_price),
+            )
+        evaluation = BacktestEngine.evaluate_decision_signal(
+            direction_expected=direction,
+            anchor_date=anchor_date,
+            start_price=float(start_price),
+            forward_bars=[end_bar],
+            config=EvaluationConfig(
+                eval_window_days=1,
+                neutral_band_pct=2.0,
+                engine_version=DECISION_SIGNAL_OUTCOME_ENGINE_VERSION,
+            ),
+        )
+        return {
+            **base,
+            "eval_status": evaluation.get("eval_status"),
+            "outcome": evaluation.get("outcome"),
+            "direction_expected": direction,
+            "direction_correct": evaluation.get("direction_correct"),
+            "unable_reason": evaluation.get("unable_reason"),
+            "anchor_date": anchor_date,
+            "eval_window_days": 1,
+            "start_price": evaluation.get("start_price", start_price),
+            "end_close": evaluation.get("end_close"),
+            "max_high": evaluation.get("max_high"),
+            "min_low": evaluation.get("min_low"),
+            "stock_return_pct": evaluation.get("stock_return_pct"),
+        }
+
+    def _direction_for_signal(self, signal: DecisionSignalRecord) -> Optional[str]:
+        action_direction = self._direction_for_action(signal.action)
+        if action_direction is not None:
+            return action_direction
+        if signal.action not in {"watch", "alert"}:
+            return None
+        evidence = self._json_loads(signal.evidence_json)
+        trend = str(
+            evidence.get("trend_prediction")
+            if isinstance(evidence, dict)
+            else ""
+        ).strip().lower()
+        if not trend:
+            return None
+        if any(
+            marker in trend
+            for marker in ("看空", "偏弱", "空头", "下跌", "下行", "bearish", "weakening")
+        ):
+            return "not_up"
+        if any(
+            marker in trend
+            for marker in ("看多", "偏强", "多头", "上涨", "上行", "bullish", "strengthening")
+        ):
+            return "up"
+        return None
 
     @staticmethod
     def _direction_for_action(action: Optional[str]) -> Optional[str]:

@@ -8,7 +8,12 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from src.analysis_context_pack_prompt import CORE_DEGRADED_STATUSES
 from src.market_phase_summary import render_market_phase_summary
-from src.report_language import localize_confidence_level, normalize_report_language
+from src.report_language import (
+    localize_confidence_level,
+    localize_operation_advice,
+    normalize_report_language,
+)
+from src.schemas.decision_action import localize_action_label, normalize_decision_action
 
 if TYPE_CHECKING:
     from src.analyzer import AnalysisResult
@@ -205,6 +210,60 @@ def apply_phase_decision_guardrails(
     return adjustments
 
 
+def apply_core_data_action_guardrail(
+    result: "AnalysisResult",
+    *,
+    analysis_context_pack_overview: Optional[Dict[str, Any]],
+    report_language: str = "zh",
+) -> List[str]:
+    """Downgrade an explicit entry action when core market data is degraded."""
+
+    if result is None:
+        return []
+    overview = (
+        analysis_context_pack_overview
+        if isinstance(analysis_context_pack_overview, Mapping)
+        else None
+    )
+    if not _has_core_degraded_block(overview) or not _has_entry_action(result):
+        return []
+
+    language = normalize_report_language(
+        report_language or getattr(result, "report_language", "zh")
+    )
+    dashboard = getattr(result, "dashboard", None)
+    if not isinstance(dashboard, dict):
+        dashboard = {}
+        result.dashboard = dashboard
+    phase_decision = dashboard.get("phase_decision")
+    if not isinstance(phase_decision, dict):
+        phase_decision = {}
+        dashboard["phase_decision"] = phase_decision
+    _ensure_phase_decision_shape(phase_decision)
+
+    reason = _reason_text(
+        language,
+        en="Core quote, daily-bar, or technical data is degraded; entry action was downgraded to watch.",
+        zh="核心行情、日线或技术数据受限，买入/加仓动作已降级为观望。",
+        ko="핵심 시세·일봉·기술 데이터가 제한되어 매수/비중확대 동작을 관망으로 하향 조정했습니다.",
+    )
+    _downgrade_entry_action_to_watch(
+        result,
+        dashboard=dashboard,
+        phase_decision=phase_decision,
+        language=language,
+        reason=reason,
+    )
+    _append_reason(phase_decision, reason)
+    adjustment = "action_downgraded_core_data_degraded"
+    phase_decision["data_limitations"] = _merge_limitations(
+        phase_decision.get("data_limitations"),
+        _overview_limitations(overview),
+        [_adjustment_limitation_text(adjustment, language=language)],
+    )
+    return [adjustment]
+
+
 def _ensure_phase_decision_shape(phase_decision: Dict[str, Any]) -> None:
     phase_decision.setdefault("phase_context", None)
     phase_decision.setdefault("action_window", None)
@@ -240,6 +299,59 @@ def _has_core_degraded_block(overview: Optional[Mapping[str, Any]]) -> bool:
         if key in CORE_DATA_BLOCKS and status in CORE_DEGRADED_STATUSES:
             return True
     return False
+
+
+def _has_entry_action(result: "AnalysisResult") -> bool:
+    candidates = (
+        getattr(result, "action", None),
+        getattr(result, "operation_advice", None),
+    )
+    if any(normalize_decision_action(value) in {"buy", "add"} for value in candidates):
+        return True
+    dashboard = getattr(result, "dashboard", None)
+    if not isinstance(dashboard, Mapping):
+        return False
+    return normalize_decision_action(dashboard.get("action")) in {"buy", "add"}
+
+
+def _downgrade_entry_action_to_watch(
+    result: "AnalysisResult",
+    *,
+    dashboard: Dict[str, Any],
+    phase_decision: Dict[str, Any],
+    language: str,
+    reason: str,
+) -> None:
+    advice = localize_operation_advice("观望", language)
+    label = localize_action_label("watch", language) or advice
+    result.action = "watch"
+    result.action_label = label
+    result.operation_advice = advice
+    result.decision_type = "hold"
+
+    dashboard["action"] = "watch"
+    dashboard["action_label"] = label
+    dashboard["operation_advice"] = advice
+    dashboard["decision_type"] = "hold"
+
+    calibration = dashboard.get("decision_score_calibration")
+    if not isinstance(calibration, dict):
+        calibration = {}
+        dashboard["decision_score_calibration"] = calibration
+    calibration["guardrail_reason"] = reason
+    calibration["final_action"] = "watch"
+
+    stability = dashboard.get("decision_stability")
+    if isinstance(stability, dict):
+        stability["final_action"] = "watch"
+
+    core = dashboard.get("core_conclusion")
+    if not isinstance(core, dict):
+        core = {}
+        dashboard["core_conclusion"] = core
+    separator = ": " if language == "en" else "："
+    core["one_sentence"] = f"{label}{separator}{reason}"
+    phase_decision["immediate_action"] = _core_data_wait_action(language)
 
 
 def _overview_limitations(overview: Optional[Mapping[str, Any]]) -> List[str]:
@@ -380,6 +492,13 @@ def _append_reason(phase_decision: Dict[str, Any], reason: str) -> None:
 
 
 def _adjustment_limitation_text(adjustment: str, *, language: str) -> str:
+    if adjustment == "action_downgraded_core_data_degraded":
+        return _reason_text(
+            language,
+            en="entry action downgraded because core data is degraded",
+            zh="核心数据受限，买入/加仓已降级为观望",
+            ko="핵심 데이터 제한으로 매수/비중확대를 관망으로 하향 조정함",
+        )
     if adjustment == "postmarket_recap_wording_adjusted":
         return _reason_text(
             language,
@@ -417,6 +536,15 @@ def _safe_wait_action(language: str) -> str:
         en="Wait for intraday confirmation; do not chase.",
         zh="等待盘中确认，禁止追高。",
         ko="장중 확인을 기다리고 추격 매수하지 마세요.",
+    )
+
+
+def _core_data_wait_action(language: str) -> str:
+    return _reason_text(
+        language,
+        en="Watch until core quote, daily-bar, and technical data are reliable.",
+        zh="核心行情、日线和技术数据恢复可靠前保持观望。",
+        ko="핵심 시세·일봉·기술 데이터가 신뢰 가능한 상태로 회복될 때까지 관망하세요.",
     )
 
 

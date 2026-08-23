@@ -80,6 +80,12 @@ _UNSUPPORTED_ARG_MARKERS = (
     "unknown flag",
     "unrecognized flag",
 )
+_APPROVAL_REQUIRED_PATTERN = re.compile(
+    r"approval[_ -]required|requires? (?:user )?approval|"
+    r"not approved|permission denied|request_permissions|"
+    r"approval at execution",
+    re.IGNORECASE,
+)
 _SENSITIVE_URL_KEY_PARTS = {
     "access_token",
     "api_key",
@@ -426,6 +432,11 @@ _CLAUDE_CODE_STATIC_INSTRUCTION = (
     "Return only the final response content. Do not call tools, read files, "
     "use MCP, or ask for interactive approval."
 )
+_CODEX_STATIC_INSTRUCTION = (
+    "Generate the requested DSA analysis output entirely from the supplied prompt. "
+    "Return only the final response content. Do not call tools, read files, browse, "
+    "edit files, spawn agents, ask questions, or request interactive approval."
+)
 _PROMPT_FILE_PLACEHOLDER = "{prompt_file}"
 _OPENCODE_STATIC_INSTRUCTION = (
     "Generate the requested DSA output from the attached prompt file. "
@@ -501,6 +512,7 @@ class LocalCliPreset:
     ).strip()
     contract_args: Sequence[str] = ()
     prompt_transport: str = "stdin"
+    static_instruction: Optional[str] = None
 
 
 CODEX_CLI_PRESET = LocalCliPreset(
@@ -510,6 +522,13 @@ CODEX_CLI_PRESET = LocalCliPreset(
         "--ask-for-approval",
         "never",
         "exec",
+        "--ignore-user-config",
+        "--disable",
+        "shell_tool",
+        "-c",
+        "tools.web_search=false",
+        "-c",
+        "tools.view_image=false",
         "--skip-git-repo-check",
         "--sandbox",
         "read-only",
@@ -524,6 +543,13 @@ CODEX_CLI_PRESET = LocalCliPreset(
         "--ask-for-approval",
         "never",
         "exec",
+        "--ignore-user-config",
+        "--disable",
+        "shell_tool",
+        "-c",
+        "tools.web_search=false",
+        "-c",
+        "tools.view_image=false",
         "--skip-git-repo-check",
         "--sandbox",
         "read-only",
@@ -532,6 +558,7 @@ CODEX_CLI_PRESET = LocalCliPreset(
         "--ephemeral",
         "--output-last-message",
     ),
+    static_instruction=_CODEX_STATIC_INSTRUCTION,
 )
 
 CLAUDE_CODE_CLI_PRESET = LocalCliPreset(
@@ -2123,6 +2150,8 @@ class LocalCliGenerationBackend(GenerationBackend):
         prompt_text = prompt
         if system_prompt:
             prompt_text = f"{system_prompt.strip()}\n\n{prompt}"
+        if self._preset.static_instruction:
+            prompt_text = f"{self._preset.static_instruction}\n\n{prompt_text}"
 
         diagnostics: Dict[str, Any] = {
             "preset_id": self._preset.preset_id,
@@ -2132,6 +2161,7 @@ class LocalCliGenerationBackend(GenerationBackend):
             "timeout_seconds": timeout_seconds,
             "max_output_bytes": max_output_bytes,
             "concurrency_limit": concurrency_limit,
+            "static_instruction_applied": bool(self._preset.static_instruction),
         }
 
         stdout = ""
@@ -2714,7 +2744,7 @@ class LocalCliGenerationBackend(GenerationBackend):
         elif "login" in combined or "authentication" in combined or "not authenticated" in combined:
             code = GenerationErrorCode.LOGIN_REQUIRED
             reason = "login_required"
-        elif "approval" in combined or "approve" in combined or "permission" in combined:
+        elif _APPROVAL_REQUIRED_PATTERN.search(combined):
             code = GenerationErrorCode.APPROVAL_REQUIRED
             reason = "approval_required"
         elif "tty" in combined or "interactive" in combined or "prompt" in combined:

@@ -42,14 +42,14 @@ def run_with_global_analysis_lock(
     *,
     blocking: bool = True,
 ) -> bool:
-    """Execute a task while holding the shared runtime analysis lock."""
+    """Execute a task under the shared lock and preserve explicit failure."""
     if not _RUNTIME_ANALYSIS_LOCK.acquire(blocking=blocking):
         return False
     try:
-        task_runner(config, args, stock_codes)
+        result = task_runner(config, args, stock_codes)
     finally:
         _RUNTIME_ANALYSIS_LOCK.release()
-    return True
+    return result is not False
 
 
 def _agent_event_monitor_interval_seconds(config: Config) -> int:

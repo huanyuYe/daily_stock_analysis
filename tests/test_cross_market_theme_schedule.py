@@ -10,7 +10,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from scripts.run_cross_market_theme_report import load_report_watchlist, run_and_push
+from scripts.run_cross_market_theme_report import (
+    load_report_watchlist,
+    main,
+    run_and_push,
+)
 
 
 class _Service:
@@ -110,7 +114,31 @@ def test_wrapper_does_not_push_a_skipped_report():
     )
 
     assert result["skipped"] is True
+    assert result["success"] is False
+    assert result["operational_status"] == "blocked_missing_dependency"
     assert pushed == []
+
+
+def test_cli_returns_nonzero_for_missing_required_upstream_report():
+    with patch(
+        "scripts.run_cross_market_theme_report.parse_args",
+        return_value=SimpleNamespace(
+            phase="morning",
+            project_root=Path("/tmp/project"),
+            reports_root=Path("/tmp/project/reports"),
+            output_root=Path("/tmp/project/output"),
+            target_duration=1200,
+            no_push=False,
+        ),
+    ), patch(
+        "scripts.run_cross_market_theme_report.run_and_push",
+        return_value={
+            "success": False,
+            "skipped": True,
+            "reason": "fresh_us_postmarket_report_required",
+        },
+    ):
+        assert main() == 2
 
 
 def test_timers_run_twice_in_shanghai_timezone_and_wait_for_shared_lock():

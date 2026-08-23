@@ -975,7 +975,15 @@ def _quote_to_dict(
         "provider_timestamp": _serializable_time(payload.get("provider_timestamp")),
         "fetched_at": _serializable_time(payload.get("fetched_at")),
         "timestamp_verified": timestamp_verified,
+        "fresh_for_report_purpose": timestamp_verified,
+        "freshness_basis": {
+            "reference": "provider_timestamp_vs_report_as_of",
+            "max_age_hours": max_age_hours,
+        },
         "provider_age_hours": round(age_hours, 2) if age_hours is not None else None,
+        # Provider freshness uses the realtime adapter's generic TTL.  Keep it
+        # as provenance, but do not use it as this completed-session report's
+        # purpose-specific freshness verdict.
         "provider_is_stale": payload.get("is_stale"),
         "trade_session": payload.get("trade_session"),
         "data_quality": payload.get("data_quality"),
@@ -997,6 +1005,12 @@ def _quote_metrics(rows: Sequence[Mapping[str, Any]], expected_count: int) -> di
             1
             for row in rows
             if row.get("status") == "available" and row.get("timestamp_verified") is True
+        ),
+        "purpose_fresh_count": sum(
+            1
+            for row in rows
+            if row.get("status") == "available"
+            and row.get("fresh_for_report_purpose") is True
         ),
         "coverage_ratio": round(available / expected, 4),
         "average_change_pct": round(sum(values) / available, 4) if values else None,

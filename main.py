@@ -731,12 +731,26 @@ def _save_reused_market_review_report(
 
 
 def _run_auto_backtest(config: Config) -> None:
-    """Run the independently configured auto-backtest without failing analysis."""
+    """Run configured outcome/backtest feedback loops without failing analysis."""
+
+    if not getattr(config, 'backtest_enabled', False):
+        return
 
     try:
-        if not getattr(config, 'backtest_enabled', False):
-            return
+        from src.services.decision_signal_outcome_service import DecisionSignalOutcomeService
 
+        outcome_stats = DecisionSignalOutcomeService().run_outcomes(limit=200)
+        logger.info(
+            "决策信号后验完成: evaluated=%s created=%s updated=%s skipped=%s",
+            outcome_stats.get("evaluated"),
+            outcome_stats.get("created"),
+            outcome_stats.get("updated"),
+            outcome_stats.get("skipped"),
+        )
+    except Exception as exc:
+        logger.warning("决策信号后验失败（已忽略）: %s", exc)
+
+    try:
         from src.services.backtest_service import BacktestService
 
         logger.info("开始自动回测...")
@@ -1140,13 +1154,13 @@ def _run_analysis_with_runtime_scheduler_lock(
     config: Config,
     args: argparse.Namespace,
     stock_codes: Optional[List[str]] = None,
-) -> None:
+) -> bool:
     from src.services.runtime_scheduler import run_with_global_analysis_lock
 
     # Keep startup/triggered analysis in sync with API runtime scheduler and
     # run-now entrypoint. Blocking is expected here because startup paths should
     # wait for an in-flight job before returning a response.
-    run_with_global_analysis_lock(
+    return run_with_global_analysis_lock(
         task_runner=run_full_analysis,
         config=config,
         args=args,
@@ -1607,7 +1621,8 @@ def main() -> int:
 
             def scheduled_task():
                 runtime_config = _reload_runtime_config()
-                run_full_analysis(runtime_config, args, scheduled_stock_codes)
+                if run_full_analysis(runtime_config, args, scheduled_stock_codes) is False:
+                    raise RuntimeError("scheduled analysis reported failure")
 
             background_tasks = []
             if getattr(config, 'agent_event_monitor_enabled', False):
@@ -1645,7 +1660,18 @@ def main() -> int:
         # 模式3: 正常单次运行
         if config.run_immediately:
             try:
-                _run_analysis_with_runtime_scheduler_lock(config, args, stock_codes)
+                analysis_succeeded = _run_analysis_with_runtime_scheduler_lock(
+                    config,
+                    args,
+                    stock_codes,
+                )
+                if analysis_succeeded is False:
+                    if not start_serve:
+                        raise RuntimeError("analysis reported failure")
+                    logger.error(
+                        "启动分析报告失败，Web/API 服务继续运行；"
+                        "本轮不会被标记为成功。"
+                    )
             except FutuPortfolioError as exc:
                 if not start_serve:
                     raise

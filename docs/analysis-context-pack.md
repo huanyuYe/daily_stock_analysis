@@ -145,15 +145,17 @@ P5 在不升级 `PACK_VERSION`、不新增 fetcher、不新增配置项、不做
 `DataQuality` 追加以下低敏字段，并保留旧 `warnings` / `metadata`：
 
 - `overall_score: Optional[int]`：0-100 总分。
-- `level: Optional["good"|"usable"|"limited"|"poor"]`：`>=85 good`、`>=70 usable`、`>=55 limited`，否则 `poor`。
+- `level: Optional["good"|"usable"|"limited"|"poor"]`：先按 `>=85 good`、`>=70 usable`、`>=55 limited`、否则 `poor` 计算加权等级，再应用核心数据上限。
 - `block_scores: Dict[str, int]`：固定六块的状态分。
 - `limitations: List[str]`：最多 5 条稳定限制说明，使用 `block: status` 形式。
 
-评分只计算固定六块，不随辅助块缺失重归一化，未来新增 block 不自动影响总分。权重固定为 `quote=25`、`daily_bars=25`、`technical=25`、`news=10`、`fundamentals=10`、`chip=5`；一般状态分固定为 `available=100`、`partial=75`、`estimated=75`、`not_supported=70`、`fallback=65`、`stale=50`、`missing=35`、`fetch_failed=25`。`fundamentals` 若带 `coverage`，改按 `valuation/growth/earnings/institution/capital_flow/dragon_tiger/boards` 的真实子块状态平均计分：`ok/available=100`、`partial=65`、`not_supported=35`、`failed/fetch_failed/missing=25`；没有 coverage 时才回退到一般状态分。总分公式为 `round(sum(block_score * weight) / 100)`。
+评分只计算固定六块，不随辅助块缺失重归一化，未来新增 block 不自动影响总分。权重固定为 `quote=25`、`daily_bars=25`、`technical=25`、`news=10`、`fundamentals=10`、`chip=5`；一般状态分固定为 `available=100`、`partial=75`、`estimated=75`、`not_supported=70`、`fallback=65`、`stale=50`、`missing=35`、`fetch_failed=25`。`fundamentals` 若带 `coverage`，改按 `valuation/growth/earnings/institution/capital_flow/dragon_tiger/boards` 的真实子块状态平均计分：`ok/available=100`、`partial=65`、`not_supported=35`、`failed/fetch_failed/missing=25`；没有 coverage 时才回退到一般状态分。总分公式为 `round(sum(block_score * weight) / 100)`。为避免辅助块高分掩盖决策关键输入，`quote`、`daily_bars`、`technical` 任一为 `stale/fallback/partial/estimated` 时，最终 `level` 最高只能是 `limited`；任一为 `missing/fetch_failed` 时最高只能是 `poor`。`overall_score` 仍保留原始加权值，因此分数与等级可能有意分离，`limitations` 用于解释触发护栏的核心块。
 
 `limitations` 优先列出核心块 `quote` / `daily_bars` / `technical` 的 `stale`、`fallback`、`missing`、`fetch_failed`、`partial`、`estimated`；其次列出辅助块 `news` / `fundamentals` / `chip` 的 `fetch_failed`、`fallback`、`stale`、`partial`、`estimated`。辅助块单纯缺失或不支持不进入限制列表，避免把新闻缺失、未配置搜索或不支持能力解释成利好/利空。
 
 Prompt 数据限制只在 `format_analysis_context_pack_prompt_section()` 内渲染，紧跟 pack summary，因此普通分析、single Agent 和 multi-agent 复用同一消费路径。中文输出 `数据限制`，英文输出 `Data Limitations`；只有真实 score 存在时才输出评分行。若 `quote`、`daily_bars` 或 `technical` 为 degraded 状态，Prompt 明确要求最终 JSON 的 `confidence_level` 不得为 `高` / `High`。Prompt 继续只使用 status/source/warnings/missing_reason/低敏评分，不输出 raw payload、新闻正文、趋势原始值、secret、token 或 webhook。
+
+Prompt 约束之后还会执行确定性结果护栏：当 `quote`、`daily_bars` 或 `technical` 任一为 degraded 且模型仍输出 `buy/add` 时，普通分析与 Agent 分析统一把公开动作、操作建议、三态决策和阶段即时动作收敛为 `watch/观望/hold`，写入 `decision_score_calibration.guardrail_reason`，再由动作计划护栏移除直接建仓/加仓语义。该原因允许高评分与观望动作有意并存，避免后续 canonical score 对齐把动作重新升级为买入；Agent 最终解释把真实动作变化归因到独立的 `data_quality` 步骤，不与 `market_phase` 或 `daily_market_context` 混淆。低质量等级映射为 DecisionSignal policy 的 `low` 时，同样不得持久化可执行 `buy/add`，而是可审计地降级为 `watch`。
 
 #1386 P2-full 在 P5 score/limitations 之后、confidence/safety 之前追加最小的 `phase × degraded data` 交叉约束：当 `AnalysisContextPack.phase` 来自合法 `MarketPhaseContext`，且 `quote`、`daily_bars` 或 `technical` 存在 degraded 状态时，Prompt 只补充当前阶段下数据质量如何限制盘中判断、开盘计划或保守分析；它不替代 P5 的 confidence/safety 规则，也不复述 `market_phase_context` 的 phase-only 文案。`pack.phase` 缺失、非 dict 或包含非法 phase 时 fail-open，仅保留 P5 通用数据限制。
 

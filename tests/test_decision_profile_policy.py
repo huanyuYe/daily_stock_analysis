@@ -48,6 +48,26 @@ def test_policy_safely_downgrades_buy_with_missing_confidence() -> None:
     assert all(warning.get("message") for warning in result.warnings)
 
 
+def test_policy_safely_downgrades_buy_with_low_data_quality() -> None:
+    result = apply_decision_profile_policy(
+        DecisionSignalCandidate(
+            action="buy",
+            score=70,
+            confidence=0.7,
+            horizon="3d",
+            invalidation="跌破趋势线",
+            stop_loss=10,
+            target_price=15,
+        ),
+        decision_profile="balanced",
+        data_quality_level="low",
+    )
+
+    assert result.candidate.action == "watch"
+    assert result.guardrail_result.passed is True
+    assert "insufficient_data_quality" in result.guardrail_result.violations
+
+
 def test_policy_requires_explicit_invalidation_for_aggressive_buy() -> None:
     result = apply_decision_profile_policy(
         DecisionSignalCandidate(

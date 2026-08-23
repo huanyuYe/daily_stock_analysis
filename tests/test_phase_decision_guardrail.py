@@ -4,7 +4,11 @@
 from types import SimpleNamespace
 
 from src.analyzer import AnalysisResult
-from src.phase_decision_guardrail import apply_phase_decision_guardrails
+from src.phase_decision_guardrail import (
+    apply_core_data_action_guardrail,
+    apply_phase_decision_guardrails,
+)
+from src.services.decision_signal_extractor import resolve_decision_signal_action_fields
 
 
 def _result(**kwargs) -> AnalysisResult:
@@ -94,10 +98,27 @@ def test_degraded_core_data_caps_high_confidence_buy() -> None:
 
     assert "confidence_capped_core_data_degraded" in adjustments
     assert result.confidence_level == "中"
+    data_adjustments = apply_core_data_action_guardrail(
+        result,
+        analysis_context_pack_overview=_overview("stale"),
+        report_language="zh",
+    )
+    assert data_adjustments == ["action_downgraded_core_data_degraded"]
+    assert result.action == "watch"
+    assert result.action_label == "观望"
+    assert result.operation_advice == "观望"
+    assert result.decision_type == "hold"
     pd = result.dashboard["phase_decision"]
     assert pd["phase_context"]["phase"] == "intraday"
     assert "quote: stale" in pd["data_limitations"]
     assert "核心行情" in pd["confidence_reason"]
+    assert "恢复可靠前保持观望" in pd["immediate_action"]
+    assert result.dashboard["decision_score_calibration"]["final_action"] == "watch"
+    assert "核心行情" in result.dashboard["decision_score_calibration"]["guardrail_reason"]
+    assert resolve_decision_signal_action_fields(
+        result,
+        report_type="stock_analysis",
+    )["action"] == "watch"
 
 
 def test_degraded_core_data_caps_high_confidence_hold_advice() -> None:
@@ -127,6 +148,11 @@ def test_degraded_core_data_caps_high_confidence_hold_advice() -> None:
 
     assert "confidence_capped_core_data_degraded" in adjustments
     assert result.confidence_level == "中"
+    assert apply_core_data_action_guardrail(
+        result,
+        analysis_context_pack_overview=_overview("stale"),
+        report_language="zh",
+    ) == []
     assert "核心行情" in result.dashboard["phase_decision"]["confidence_reason"]
     assert "quote: stale" in result.dashboard["phase_decision"]["data_limitations"]
 
@@ -225,7 +251,13 @@ def test_premarket_degraded_immediate_action_uses_strongest_cap() -> None:
     assert "confidence_capped_core_data_degraded" in adjustments
     assert "confidence_capped_non_intraday_action" in adjustments
     assert result.confidence_level == "低"
-    assert result.dashboard["phase_decision"]["immediate_action"] == "等待盘中确认，禁止追高。"
+    data_adjustments = apply_core_data_action_guardrail(
+        result,
+        analysis_context_pack_overview=_overview("stale"),
+        report_language="zh",
+    )
+    assert data_adjustments == ["action_downgraded_core_data_degraded"]
+    assert "恢复可靠前保持观望" in result.dashboard["phase_decision"]["immediate_action"]
 
 
 def test_intraday_postmarket_recap_wording_is_adjusted_in_zh_and_en() -> None:

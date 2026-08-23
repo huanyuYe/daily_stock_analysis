@@ -483,6 +483,21 @@ def test_data_quality_scores_fixed_blocks_and_limits_auxiliary_missing() -> None
     ]
 
 
+def test_core_data_degradation_caps_the_overall_quality_level() -> None:
+    fallback = AnalysisContextBuilder.build(
+        _artifacts(realtime_quote=_quote(RealtimeSource.FALLBACK))
+    )
+    stale = AnalysisContextBuilder.build(
+        _artifacts(metadata={"query_id": "q-1", "price_stale": True})
+    )
+    missing = AnalysisContextBuilder.build(_artifacts(realtime_quote=None))
+
+    assert fallback.data_quality.overall_score >= 85
+    assert fallback.data_quality.level == "limited"
+    assert stale.data_quality.level == "limited"
+    assert missing.data_quality.level == "poor"
+
+
 def test_portfolio_block_is_auxiliary_and_does_not_change_quality_score() -> None:
     baseline = AnalysisContextBuilder.build(_artifacts())
     pack = AnalysisContextBuilder.build(

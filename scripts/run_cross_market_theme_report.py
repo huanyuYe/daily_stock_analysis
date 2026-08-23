@@ -28,6 +28,12 @@ except ModuleNotFoundError:
 
 
 DEFAULT_TARGET_DURATION_SECONDS = 20 * 60
+BLOCKING_SKIP_REASONS = frozenset({
+    "fresh_us_postmarket_report_required",
+    "same_day_morning_snapshot_required",
+    "morning_snapshot_unreadable",
+    "fresh_cn_or_hk_postmarket_report_required",
+})
 
 
 def load_report_watchlist(
@@ -83,6 +89,17 @@ def run_and_push(
     )
     generated = generator.generate(phase, watchlist)
     content = str(generated.pop("content", "") or "")
+    dependency_blocked = (
+        bool(generated.get("skipped"))
+        and generated.get("reason") in BLOCKING_SKIP_REASONS
+    )
+    if dependency_blocked:
+        generated["success"] = False
+        generated["operational_status"] = "blocked_missing_dependency"
+    elif generated.get("skipped"):
+        generated["operational_status"] = "skipped_not_applicable"
+    else:
+        generated["operational_status"] = "completed"
     delivery: dict[str, object] | None = None
     if not generated.get("skipped") and push_enabled:
         if not content:
@@ -128,7 +145,7 @@ def main() -> int:
         push_enabled=not args.no_push,
     )
     print(json.dumps(result, ensure_ascii=False))
-    return 0
+    return 0 if result.get("success") is not False else 2
 
 
 if __name__ == "__main__":

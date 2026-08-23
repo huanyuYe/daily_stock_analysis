@@ -479,7 +479,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         loader.assert_called_once_with()
 
-    def test_standalone_futu_downstream_failure_keeps_existing_exit_semantics(self) -> None:
+    def test_standalone_futu_downstream_failure_returns_nonzero(self) -> None:
         args = self._make_args(portfolio="futu")
         config = self._make_config(run_immediately=True)
 
@@ -499,7 +499,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
         ):
             exit_code = main.main()
 
-        self.assertEqual(exit_code, 0)
+        self.assertEqual(exit_code, 1)
         loader.assert_called_once_with()
 
     def test_schedule_mode_reload_uses_latest_runtime_config(self) -> None:

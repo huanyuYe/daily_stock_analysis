@@ -10,7 +10,10 @@ from datetime import date, datetime
 import pytest
 
 from src.config import Config
-from src.services.decision_signal_outcome_service import DecisionSignalOutcomeService
+from src.services.decision_signal_outcome_service import (
+    DECISION_SIGNAL_OUTCOME_ENGINE_VERSION,
+    DecisionSignalOutcomeService,
+)
 from src.storage import DatabaseManager, DecisionSignalOutcomeRecord, DecisionSignalRecord, StockDaily
 
 
@@ -46,6 +49,10 @@ def _add_signal(
     profile_source: str | None = None,
     metadata_data_quality: str | None = None,
     data_quality_summary_json: str | None = '{"level": "good"}',
+    trend_prediction: str | None = None,
+    current_price: float | None = None,
+    market_phase: str = "postmarket",
+    expires_at: datetime | None = None,
 ) -> int:
     metadata = {
         "market_phase_summary": {"session_date": session_date},
@@ -55,6 +62,14 @@ def _add_signal(
         metadata["profile_source"] = profile_source
     if metadata_data_quality is not None:
         metadata["data_quality_level"] = metadata_data_quality
+    evidence = {
+        key: value
+        for key, value in {
+            "trend_prediction": trend_prediction,
+            "current_price": current_price,
+        }.items()
+        if value is not None
+    }
     with db.session_scope() as session:
         row = DecisionSignalRecord(
             stock_code=code,
@@ -64,16 +79,18 @@ def _add_signal(
             source_report_id=1001,
             trace_id=f"trace-{market}-{code}-{action}-{horizon}-{session_date}",
             decision_profile=decision_profile,
-            market_phase="postmarket",
+            market_phase=market_phase,
             trigger_source="api",
             action=action,
             action_label=action,
             horizon=horizon,
             reason="unit test",
+            evidence_json=json.dumps(evidence) if evidence else None,
             data_quality_summary_json=data_quality_summary_json,
             metadata_json=json.dumps(metadata),
             plan_quality="complete",
             status=status,
+            expires_at=expires_at,
         )
         session.add(row)
         session.flush()
@@ -120,7 +137,7 @@ def _seed_calibration_outcomes(
             session.add(DecisionSignalOutcomeRecord(
                 signal_id=signal.id,
                 horizon=horizon,
-                engine_version="decision-signal-v1",
+                engine_version=DECISION_SIGNAL_OUTCOME_ENGINE_VERSION,
                 eval_status="completed",
                 outcome=outcome_value,
                 direction_expected="not_up" if action in {"sell", "reduce", "avoid"} else "up",
@@ -496,24 +513,24 @@ def test_not_up_uses_defensive_direction_not_down_direction(isolated_db) -> None
 
 def test_unable_reasons_are_persisted_for_non_directional_and_unsupported_horizon(isolated_db) -> None:
     watch_id = _add_signal(isolated_db, action="watch", horizon="3d")
-    intraday_buy_id = _add_signal(isolated_db, code="000001", action="buy", horizon="intraday")
+    unsupported_buy_id = _add_signal(isolated_db, code="000001", action="buy", horizon="swing")
     _seed_bars(isolated_db, code="600519", closes=[103, 104, 105])
     _seed_bars(isolated_db, code="000001", closes=[103, 104, 105])
     service = DecisionSignalOutcomeService(db_manager=isolated_db)
 
     watch = service.run_outcomes(signal_id=watch_id)["items"][0]
-    intraday = service.run_outcomes(signal_id=intraday_buy_id)["items"][0]
+    unsupported = service.run_outcomes(signal_id=unsupported_buy_id)["items"][0]
     watch_skipped = service.run_outcomes(signal_id=watch_id)
-    intraday_skipped = service.run_outcomes(signal_id=intraday_buy_id)
+    unsupported_skipped = service.run_outcomes(signal_id=unsupported_buy_id)
 
     assert watch["eval_status"] == "unable"
-    assert watch["unable_reason"] == "non_directional_action"
-    assert intraday["eval_status"] == "unable"
-    assert intraday["unable_reason"] == "unsupported_horizon"
+    assert watch["unable_reason"] == "non_directional_signal"
+    assert unsupported["eval_status"] == "unable"
+    assert unsupported["unable_reason"] == "unsupported_horizon"
     assert watch_skipped["evaluated"] == 0
     assert watch_skipped["skipped"] == 1
-    assert intraday_skipped["evaluated"] == 0
-    assert intraday_skipped["skipped"] == 1
+    assert unsupported_skipped["evaluated"] == 0
+    assert unsupported_skipped["skipped"] == 1
 
 
 def test_watch_and_alert_outcomes_remain_unable_without_market_reads(isolated_db) -> None:
@@ -555,6 +572,69 @@ def test_watch_and_alert_outcomes_remain_unable_without_market_reads(isolated_db
     assert profile_bucket["completed"] == 0
     assert profile_bucket["total"] == 2
     assert profile_bucket["max_adverse_excursion_pct"] is None
+
+
+@pytest.mark.parametrize(
+    ("trend", "expected_direction", "closes", "expected_outcome"),
+    [
+        ("震荡偏强", "up", [103.0, 104.0, 105.0], "hit"),
+        ("看空", "not_up", [101.0, 101.5, 102.0], "hit"),
+    ],
+)
+def test_watch_signal_uses_explicit_report_trend_for_outcome(
+    isolated_db,
+    trend,
+    expected_direction,
+    closes,
+    expected_outcome,
+) -> None:
+    signal_id = _add_signal(
+        isolated_db,
+        action="watch",
+        horizon="3d",
+        trend_prediction=trend,
+    )
+    _seed_bars(isolated_db, closes=closes)
+
+    item = DecisionSignalOutcomeService(db_manager=isolated_db).run_outcomes(
+        signal_id=signal_id
+    )["items"][0]
+
+    assert item["direction_expected"] == expected_direction
+    assert item["outcome"] == expected_outcome
+
+
+def test_intraday_signal_uses_report_price_and_same_session_final_bar(isolated_db) -> None:
+    signal_id = _add_signal(
+        isolated_db,
+        action="buy",
+        horizon="intraday",
+        market_phase="intraday",
+        current_price=100.0,
+        expires_at=datetime(2024, 1, 2, 8, 0, 0),
+    )
+    with isolated_db.session_scope() as session:
+        session.add(
+            StockDaily(
+                code="600519",
+                date=date(2024, 1, 2),
+                open=100.0,
+                high=104.0,
+                low=99.0,
+                close=103.0,
+            )
+        )
+
+    item = DecisionSignalOutcomeService(db_manager=isolated_db).run_outcomes(
+        signal_id=signal_id
+    )["items"][0]
+
+    assert item["eval_status"] == "completed"
+    assert item["direction_expected"] == "up"
+    assert item["start_price"] == 100.0
+    assert item["end_close"] == 103.0
+    assert item["stock_return_pct"] == 3.0
+    assert item["outcome"] == "hit"
 
 
 def test_missing_anchor_price_is_retried_after_data_arrives(isolated_db) -> None:

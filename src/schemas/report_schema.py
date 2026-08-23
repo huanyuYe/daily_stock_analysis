@@ -291,6 +291,7 @@ class PipelineActionAdjustmentExplanation(BaseModel):
         "structure_and_fundamentals",
         "market_phase",
         "daily_market_context",
+        "data_quality",
         "action_plan_reconciliation",
     ]
     from_action: Literal["buy", "add", "hold", "reduce", "sell", "watch", "avoid", "alert"]

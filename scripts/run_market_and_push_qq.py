@@ -10,7 +10,9 @@ import re
 import subprocess
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -26,6 +28,7 @@ try:
         DEFAULT_MAX_CHARS,
         DEFAULT_RETENTION_DAYS,
         build_qq_summary,
+        extract_report_stock_codes,
         find_latest_report,
     )
 except ModuleNotFoundError:
@@ -34,6 +37,7 @@ except ModuleNotFoundError:
         DEFAULT_MAX_CHARS,
         DEFAULT_RETENTION_DAYS,
         build_qq_summary,
+        extract_report_stock_codes,
         find_latest_report,
     )
 
@@ -72,6 +76,72 @@ def _summarize_child_output(stdout: str, stderr: str) -> dict[str, int]:
         "search_failed": r"\[情报搜索\].*搜索失败",
     }
     return {name: len(re.findall(pattern, combined)) for name, pattern in patterns.items()}
+
+
+def _build_report_coverage(
+    expected_codes: Sequence[str],
+    completed_codes: Sequence[str],
+) -> dict[str, object]:
+    """Build a deterministic completeness contract for one aggregate report."""
+
+    expected = [str(code or "").strip().upper() for code in expected_codes if str(code or "").strip()]
+    completed = [str(code or "").strip().upper() for code in completed_codes if str(code or "").strip()]
+    expected_set = set(expected)
+    completed_set = set(completed)
+    duplicates = sorted(code for code, count in Counter(completed).items() if count > 1)
+    missing = [code for code in expected if code not in completed_set]
+    unexpected = [code for code in completed if code not in expected_set]
+    complete = (
+        not missing
+        and not unexpected
+        and not duplicates
+        and len(completed) == len(expected)
+    )
+    return {
+        "status": "complete" if complete else "partial",
+        "expected_count": len(expected),
+        "completed_count": len(completed),
+        "expected_codes": expected,
+        "completed_codes": completed,
+        "missing_codes": missing,
+        "unexpected_codes": unexpected,
+        "duplicate_codes": duplicates,
+    }
+
+
+def _write_run_manifest(
+    report_path: Path,
+    *,
+    profile: MarketAnalysisProfile,
+    coverage: dict[str, object],
+    upstream_diagnostics: dict[str, int],
+    created_at: str,
+    delivery_status: dict[str, object],
+    parse_error: str | None = None,
+) -> Path:
+    """Persist a non-sensitive report/run contract next to the aggregate report."""
+
+    manifest_path = report_path.with_name(f"{report_path.stem}.run.json")
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "created_at": created_at,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "profile": profile.name,
+        "report": report_path.name,
+        "report_mtime_ns": report_path.stat().st_mtime_ns,
+        "coverage": coverage,
+        "upstream_diagnostics": upstream_diagnostics,
+        "delivery": delivery_status,
+    }
+    if parse_error:
+        payload["parse_error"] = parse_error[:300]
+    temporary = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(manifest_path)
+    return manifest_path
 
 
 def parse_profile(value: str) -> MarketAnalysisProfile:
@@ -220,6 +290,10 @@ def run_and_push(
         timeout=timeout_seconds,
     )
     analysis_duration_seconds = time.monotonic() - run_started
+    upstream_diagnostics = _summarize_child_output(
+        completed.stdout or "",
+        completed.stderr or "",
+    )
     if completed.returncode != 0:
         error = (completed.stderr or completed.stdout or "").strip()
         raise RuntimeError(
@@ -249,12 +323,79 @@ def run_and_push(
             "refusing to push stale content"
         )
 
+    parse_error: str | None = None
+    try:
+        completed_codes = extract_report_stock_codes(latest)
+    except (OSError, ValueError) as exc:
+        completed_codes = []
+        parse_error = f"{type(exc).__name__}: {exc}"
+    coverage = _build_report_coverage(stock_codes, completed_codes)
+    manifest_created_at = datetime.now(timezone.utc).isoformat()
+    manifest_path = _write_run_manifest(
+        latest,
+        profile=profile,
+        coverage=coverage,
+        upstream_diagnostics=upstream_diagnostics,
+        created_at=manifest_created_at,
+        delivery_status={"status": "not_attempted"},
+        parse_error=parse_error,
+    )
+    if parse_error or coverage["status"] != "complete":
+        raise RuntimeError(
+            f"{profile.name} aggregate report is incomplete: "
+            f"expected={coverage['expected_count']} completed={coverage['completed_count']} "
+            f"missing={coverage['missing_codes']} unexpected={coverage['unexpected_codes']}; "
+            f"manifest={manifest_path}"
+        )
+
     summary = build_qq_summary(latest, max_chars=DEFAULT_MAX_CHARS)
     content = (
         f"# {profile.market_label} · {profile.phase_label}分析\n\n"
         f"{summary}"
     )
-    delivery = pusher(content)
+    try:
+        delivery = pusher(content)
+    except Exception as exc:
+        _write_run_manifest(
+            latest,
+            profile=profile,
+            coverage=coverage,
+            upstream_diagnostics=upstream_diagnostics,
+            created_at=manifest_created_at,
+            delivery_status={
+                "status": "failed",
+                "failure_code": "delivery_exception",
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise
+    if not isinstance(delivery, dict) or delivery.get("success") is not True:
+        _write_run_manifest(
+            latest,
+            profile=profile,
+            coverage=coverage,
+            upstream_diagnostics=upstream_diagnostics,
+            created_at=manifest_created_at,
+            delivery_status={
+                "status": "failed",
+                "failure_code": "delivery_not_confirmed",
+            },
+        )
+        raise RuntimeError(f"{profile.name} QQ delivery did not confirm success")
+
+    delivery_status: dict[str, object] = {"status": "delivered"}
+    for key in ("parts", "characters"):
+        value = delivery.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            delivery_status[key] = value
+    _write_run_manifest(
+        latest,
+        profile=profile,
+        coverage=coverage,
+        upstream_diagnostics=upstream_diagnostics,
+        created_at=manifest_created_at,
+        delivery_status=delivery_status,
+    )
     total_duration_seconds = time.monotonic() - run_started
     target_seconds = max(1, int(target_duration_seconds))
     return {
@@ -266,15 +407,14 @@ def run_and_push(
         "watchlist_stock_count": len(watchlist_market_codes),
         "report": str(latest),
         "report_mtime_ns": latest_mtime,
+        "run_manifest": str(manifest_path),
+        "report_coverage": coverage,
         "delivery": delivery,
         "analysis_duration_seconds": round(analysis_duration_seconds, 3),
         "total_duration_seconds": round(total_duration_seconds, 3),
         "target_duration_seconds": target_seconds,
         "within_target_duration": total_duration_seconds <= target_seconds,
-        "upstream_diagnostics": _summarize_child_output(
-            completed.stdout or "",
-            completed.stderr or "",
-        ),
+        "upstream_diagnostics": upstream_diagnostics,
     }
 
 

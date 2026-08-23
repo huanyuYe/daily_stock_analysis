@@ -150,8 +150,14 @@ def test_codex_preset_pins_noninteractive_approval_policy_before_exec() -> None:
         "never",
         "exec",
     )
-    assert CODEX_CLI_PRESET.argv[4:6] == ("--sandbox", "read-only")
-    assert CODEX_CLI_PRESET.contract_args[:3] == CODEX_CLI_PRESET.argv[:3]
+    assert "--ignore-user-config" in CODEX_CLI_PRESET.argv
+    assert ("--disable", "shell_tool") == CODEX_CLI_PRESET.argv[4:6]
+    assert "tools.web_search=false" in CODEX_CLI_PRESET.argv
+    assert "tools.view_image=false" in CODEX_CLI_PRESET.argv
+    assert ("--sandbox", "read-only") == CODEX_CLI_PRESET.argv[11:13]
+    assert tuple(CODEX_CLI_PRESET.contract_args[:-1]) == CODEX_CLI_PRESET.argv[:-1]
+    assert CODEX_CLI_PRESET.contract_args[-1] == "--output-last-message"
+    assert "Do not call tools" in (CODEX_CLI_PRESET.static_instruction or "")
 
 
 def test_claude_preset_runtime_argv_contains_contract_args(tmp_path: Path) -> None:
@@ -1185,6 +1191,41 @@ raise SystemExit(2)
 
     assert exc_info.value.error_code is GenerationErrorCode.LOGIN_REQUIRED
     assert exc_info.value.details["returncode"] == 2
+
+
+def test_non_zero_exit_maps_explicit_approval_required(tmp_path: Path) -> None:
+    backend = _backend(
+        tmp_path,
+        """
+import sys
+print('approval required before tool execution', file=sys.stderr)
+raise SystemExit(2)
+""",
+    )
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.APPROVAL_REQUIRED
+    assert exc_info.value.details["reason"] == "approval_required"
+
+
+def test_non_zero_exit_does_not_infer_approval_from_generic_permission_text(
+    tmp_path: Path,
+) -> None:
+    backend = _backend(
+        tmp_path,
+        """
+import sys
+print('permission model could not be initialized', file=sys.stderr)
+raise SystemExit(2)
+""",
+    )
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.NON_ZERO_EXIT
 
 
 def test_non_zero_exit_maps_cli_contract_unsupported(tmp_path: Path) -> None:

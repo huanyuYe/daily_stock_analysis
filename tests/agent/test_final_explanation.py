@@ -132,6 +132,27 @@ def test_build_explanation_accepts_action_plan_reconciliation_transition():
     assert payload["decision_path"] == "action_plan_reconciliation_adjusted"
 
 
+def test_build_explanation_accepts_data_quality_transition():
+    payload = build_pipeline_final_explanation(
+        runtime_facts=_facts(),
+        pipeline_start_signal="buy",
+        pipeline_start_action="buy",
+        final_action="watch",
+        pipeline_adjustments=(
+            PipelineActionAdjustment(
+                source="data_quality",
+                from_action="buy",
+                to_action="watch",
+            ),
+        ),
+    )
+
+    assert payload["final_adjustments"] == [
+        {"source": "data_quality", "from_action": "buy", "to_action": "watch"}
+    ]
+    assert payload["decision_path"] == "data_quality_adjusted"
+
+
 def test_build_explanation_uses_actual_risk_application_without_pipeline_relabeling():
     payload = build_pipeline_final_explanation(
         runtime_facts=_facts(),

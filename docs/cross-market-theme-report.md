@@ -13,7 +13,7 @@
 
 ## 数据与判定边界
 
-- 美股代理、A/HK 标的行情使用现有 `DataFetcherManager` fallback，报告保留来源、provider 时间、抓取时间和时间可核验状态。
+- 美股代理、A/HK 标的行情使用现有 `DataFetcherManager` fallback，报告保留来源、provider 时间、抓取时间和时间可核验状态。JSON 同时保留 adapter 通用 TTL 的 `provider_is_stale` 作为来源元数据，以及基于本报告已完成交易时段窗口计算的 `fresh_for_report_purpose` / `freshness_basis`；主线报告只用后者判断本次用途是否新鲜，避免把两种不同 TTL 口径混成矛盾结论。
 - A 股和港股盘后阶段同时读取现有大盘复盘中的行业/概念 Top/Bottom 榜单。榜单命中与关注标的同向时作为板块扩散证据；两者反向时最终验证降为“分化”，不会用少数个股替代行业结论。
 - 事件证据来自现有本地精选 RSS / NewsNow 资讯池，按主题关键词匹配，并保留原始链接、来源及 `published_at` 或 `fetched_at` 时间口径。未命中不等同于“没有事件”。
 - 每条主线指定至少一个 SEC 官方发行人检查标的；映射到港股关注池的发行人同时查询公共 HKEXnews。官方接口失败会明确标为 `failed`，并禁止该主题显示“证据完整”，不会以新闻聚合源替代官方检查。
@@ -60,7 +60,7 @@ reports/cross_market_theme/morning/theme_YYYYMMDD.md
 reports/cross_market_theme/morning/theme_YYYYMMDD.json
 ```
 
-下午产物保存在对应的 `close/` 目录。JSON 是下午验证使用的证据快照；Markdown 是 QQ 推送正文。上午缺少新鲜美股盘后报告、下午缺少同日上午快照，或下午两地盘后报告均不可用时，脚本返回 `skipped=true` 且不推送。
+下午产物保存在对应的 `close/` 目录。JSON 是下午验证使用的证据快照；Markdown 是 QQ 推送正文。没有目录目标等不适用场景仍返回 `success=true, skipped=true, operational_status=skipped_not_applicable`。上午缺少新鲜美股盘后报告、下午缺少同日上午快照，或下午两地盘后报告均不可用属于必需依赖缺失：脚本返回 `success=false, skipped=true, operational_status=blocked_missing_dependency`、退出码 2 且不推送，使 systemd 明确显示失败而不是绿色跳过。
 
 ## systemd 安装
 

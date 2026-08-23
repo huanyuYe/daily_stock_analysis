@@ -47,6 +47,16 @@ _CORE_LIMITATION_STATUSES = {
     ContextFieldStatus.PARTIAL,
     ContextFieldStatus.ESTIMATED,
 }
+_CORE_POOR_STATUSES = {
+    ContextFieldStatus.MISSING,
+    ContextFieldStatus.FETCH_FAILED,
+}
+_QUALITY_LEVEL_SEVERITY = {
+    "good": 0,
+    "usable": 1,
+    "limited": 2,
+    "poor": 3,
+}
 _AUX_LIMITATION_STATUSES = {
     ContextFieldStatus.FETCH_FAILED,
     ContextFieldStatus.FALLBACK,
@@ -527,9 +537,10 @@ def _build_data_quality(
         weighted_sum += score * weight
 
     overall_score = int(round(weighted_sum / 100))
+    weighted_level = _quality_level(overall_score)
     return DataQuality(
         overall_score=overall_score,
-        level=_quality_level(overall_score),
+        level=_core_capped_quality_level(blocks, weighted_level),
         block_scores=block_scores,
         limitations=_quality_limitations(blocks),
         warnings=warnings,
@@ -596,6 +607,28 @@ def _quality_level(score: int) -> str:
     if score >= 55:
         return "limited"
     return "poor"
+
+
+def _core_capped_quality_level(
+    blocks: Dict[str, AnalysisContextBlock],
+    weighted_level: str,
+) -> str:
+    """Prevent a weighted average from hiding degraded decision-critical data."""
+
+    core_statuses = [
+        _quality_block_status(blocks, key)
+        for key in ("quote", "daily_bars", "technical")
+    ]
+    if any(status in _CORE_POOR_STATUSES for status in core_statuses):
+        cap = "poor"
+    elif any(status in _CORE_LIMITATION_STATUSES for status in core_statuses):
+        cap = "limited"
+    else:
+        return weighted_level
+    return max(
+        (weighted_level, cap),
+        key=lambda level: _QUALITY_LEVEL_SEVERITY[level],
+    )
 
 
 def _quality_limitations(blocks: Dict[str, AnalysisContextBlock]) -> List[str]:
